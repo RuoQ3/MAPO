@@ -141,13 +141,12 @@ classdef MAPOGUI < handle
         dryRunManager               % DryRunManager 实例
         dryRunResult                % 试算结果缓存
 
-        % Tab 5: 公式工作台
-        FormulaWorkbenchTab         % 公式工作台标签页
-        FormulaWorkbenchPanel       % 公式工作台面板容器
-        FormulaObjectivesTable      % 目标公式表格
-        FormulaConstraintsTable     % 约束公式表格
-        FormulaPreviewArea          % 公式预览文本区
-        FormulaStatusLabel          % 公式工作台状态标签
+        % 表达式验证 (嵌入 Tab 1)
+        ExprPreviewArea             % 表达式验证预览文本区
+        ExprValidationStatusLabel   % 表达式验证状态标签
+        ValidateObjExpressionsBtn   % 目标面板验证按钮
+        ValidateConExpressionsBtn   % 约束面板验证按钮
+        ValidateAllExpressionsBtn   % 验证全部表达式按钮
 
         % 配置向导
         LaunchConfigWizardButton    % 启动配置向导按钮
@@ -169,7 +168,6 @@ classdef MAPOGUI < handle
             createEvaluatorTab(app);
             createSimulatorTab(app);
             createAlgorithmTab(app);
-            createFormulaWorkbenchTab(app);
             createRunResultsTab(app);
 
             % 初始化数据
@@ -248,10 +246,10 @@ classdef MAPOGUI < handle
 
             % 创建可滚动的网格布局
             % 使用固定像素高度，总高度超过窗口高度会自动显示滚动条
-            gridLayout = uigridlayout(app.ProblemTab, [5, 1]);
+            gridLayout = uigridlayout(app.ProblemTab, [6, 1]);
             gridLayout.ColumnWidth = {'1x'};
-            % 每个面板给予充足空间，总高度约 1150px，超过窗口高度（约 750px）
-            gridLayout.RowHeight = {180, 350, 300, 240, 280};
+            % 每个面板给予充足空间，总高度约 1350px，超过窗口高度（约 750px）
+            gridLayout.RowHeight = {180, 350, 300, 240, 280, 200};
             gridLayout.Padding = [20, 20, 20, 20];
             gridLayout.RowSpacing = 15;
             gridLayout.Scrollable = 'on';  % 启用垂直滚动条
@@ -270,6 +268,9 @@ classdef MAPOGUI < handle
 
             % Panel 5: 约束条件
             createConstraintsPanel(app, gridLayout, 5);
+
+            % Panel 6: 表达式验证预览
+            createExprValidationPanel(app, gridLayout, 6);
         end
 
         function createBasicInfoPanel(app, parent, row)
@@ -390,7 +391,7 @@ classdef MAPOGUI < handle
             btnGrid.Layout.Row = 1;
             btnGrid.Layout.Column = 1;
             btnGrid.RowHeight = {'1x'};
-            btnGrid.ColumnWidth = {110, 110, '1x'};
+            btnGrid.ColumnWidth = {110, 110, 120, '1x'};
             btnGrid.Padding = [0,0,0,0];
             btnGrid.BackgroundColor = [0.95, 1, 0.95];
 
@@ -407,6 +408,13 @@ classdef MAPOGUI < handle
             app.DeleteObjectiveButton.FontColor = [1, 1, 1];
             app.DeleteObjectiveButton.FontWeight = 'bold';
             app.DeleteObjectiveButton.ButtonPushedFcn = @(src, event) deleteObjectiveButtonPushed(app);
+
+            app.ValidateObjExpressionsBtn = uibutton(btnGrid, 'push');
+            app.ValidateObjExpressionsBtn.Text = '验证表达式';
+            app.ValidateObjExpressionsBtn.BackgroundColor = [0.2, 0.5, 0.8];
+            app.ValidateObjExpressionsBtn.FontColor = [1, 1, 1];
+            app.ValidateObjExpressionsBtn.FontWeight = 'bold';
+            app.ValidateObjExpressionsBtn.ButtonPushedFcn = @(src, event) validateObjectiveExpressions(app);
 
             % 表格
             app.ObjectivesTable = uitable(innerGrid);
@@ -492,7 +500,7 @@ classdef MAPOGUI < handle
             btnGrid.Layout.Row = 1;
             btnGrid.Layout.Column = 1;
             btnGrid.RowHeight = {'1x'};
-            btnGrid.ColumnWidth = {110, 110, '1x'};
+            btnGrid.ColumnWidth = {110, 110, 120, '1x'};
             btnGrid.Padding = [0,0,0,0];
             btnGrid.BackgroundColor = [1, 1, 0.95];
 
@@ -510,6 +518,13 @@ classdef MAPOGUI < handle
             app.DeleteConstraintButton.FontWeight = 'bold';
             app.DeleteConstraintButton.ButtonPushedFcn = @(src, event) deleteConstraintButtonPushed(app);
 
+            app.ValidateConExpressionsBtn = uibutton(btnGrid, 'push');
+            app.ValidateConExpressionsBtn.Text = '验证表达式';
+            app.ValidateConExpressionsBtn.BackgroundColor = [0.2, 0.5, 0.8];
+            app.ValidateConExpressionsBtn.FontColor = [1, 1, 1];
+            app.ValidateConExpressionsBtn.FontWeight = 'bold';
+            app.ValidateConExpressionsBtn.ButtonPushedFcn = @(src, event) validateConstraintExpressions(app);
+
             % 表格
             app.ConstraintsTable = uitable(innerGrid);
             app.ConstraintsTable.Layout.Row = 2;
@@ -521,6 +536,50 @@ classdef MAPOGUI < handle
             app.ConstraintsTable.Data = cell(0, 5);
             app.ConstraintsTable.RowName = 'numbered';
             app.ConstraintsTable.CellEditCallback = @(src, event) updateConfigStatus(app);
+        end
+
+        function createExprValidationPanel(app, parent, row)
+            % createExprValidationPanel 创建表达式验证预览面板
+            panel = uipanel(parent);
+            panel.Title = '表达式验证预览';
+            panel.Layout.Row = row;
+            panel.Layout.Column = 1;
+            panel.FontWeight = 'bold';
+            panel.BackgroundColor = [0.95, 0.95, 0.97];
+
+            innerGrid = uigridlayout(panel);
+            innerGrid.ColumnWidth = {'1x'};
+            innerGrid.RowHeight = {30, '1x'};
+            innerGrid.Padding = [10, 5, 10, 10];
+            innerGrid.RowSpacing = 5;
+
+            % 顶部: 状态标签 + 验证按钮
+            topGrid = uigridlayout(innerGrid);
+            topGrid.Layout.Row = 1;
+            topGrid.Layout.Column = 1;
+            topGrid.RowHeight = {'1x'};
+            topGrid.ColumnWidth = {'1x', 130};
+            topGrid.Padding = [0, 0, 0, 0];
+            topGrid.BackgroundColor = [0.95, 0.95, 0.97];
+
+            app.ExprValidationStatusLabel = uilabel(topGrid);
+            app.ExprValidationStatusLabel.Text = '点击"验证全部"检查表达式语法';
+            app.ExprValidationStatusLabel.FontColor = [0.4, 0.4, 0.4];
+
+            app.ValidateAllExpressionsBtn = uibutton(topGrid, 'push');
+            app.ValidateAllExpressionsBtn.Text = '验证全部表达式';
+            app.ValidateAllExpressionsBtn.BackgroundColor = [0.2, 0.5, 0.8];
+            app.ValidateAllExpressionsBtn.FontColor = [1, 1, 1];
+            app.ValidateAllExpressionsBtn.FontWeight = 'bold';
+            app.ValidateAllExpressionsBtn.ButtonPushedFcn = @(src, event) validateAllExpressions(app);
+
+            % 预览文本区
+            app.ExprPreviewArea = uitextarea(innerGrid);
+            app.ExprPreviewArea.Layout.Row = 2;
+            app.ExprPreviewArea.Layout.Column = 1;
+            app.ExprPreviewArea.Editable = 'off';
+            app.ExprPreviewArea.FontName = 'Consolas';
+            app.ExprPreviewArea.Value = {'点击"验证全部表达式"查看解析结果。'};
         end
 
         function createEvaluatorTab(app)
@@ -1369,136 +1428,6 @@ classdef MAPOGUI < handle
             updateEstimations(app);
         end
 
-        function createFormulaWorkbenchTab(app)
-            % 创建 Tab 5: 公式工作台
-            app.FormulaWorkbenchTab = uitab(app.TabGroup);
-            app.FormulaWorkbenchTab.Title = '5. 公式工作台';
-            app.FormulaWorkbenchTab.BackgroundColor = [0.96, 0.96, 0.96];
-
-            % 主布局: 上(提示+状态) 中(目标+约束) 下(预览+按钮)
-            outerGrid = uigridlayout(app.FormulaWorkbenchTab, [3, 1]);
-            outerGrid.RowHeight = {50, '1x', 200};
-            outerGrid.Padding = [15, 15, 15, 15];
-            outerGrid.RowSpacing = 10;
-
-            % 顶部: 提示和状态
-            topGrid = uigridlayout(outerGrid, [1, 2]);
-            topGrid.ColumnWidth = {'1x', 'fit'};
-            topGrid.Padding = [0, 0, 0, 0];
-
-            infoLabel = uilabel(topGrid);
-            infoLabel.Text = ['在此编辑目标函数和约束表达式。支持前缀: x.变量名, result.结果名, param.参数名。' ...
-                             '点击"验证并预览"检查语法，连接Aspen后可预览实际值。'];
-            infoLabel.WordWrap = 'on';
-            infoLabel.FontColor = [0.3, 0.3, 0.3];
-
-            app.FormulaStatusLabel = uilabel(topGrid);
-            app.FormulaStatusLabel.Text = '就绪';
-            app.FormulaStatusLabel.FontColor = [0.2, 0.6, 0.2];
-            app.FormulaStatusLabel.HorizontalAlignment = 'right';
-
-            % 中部: 目标和约束表格
-            midGrid = uigridlayout(outerGrid, [1, 2]);
-            midGrid.ColumnWidth = {'1x', '1x'};
-            midGrid.Padding = [0, 0, 0, 0];
-            midGrid.ColumnSpacing = 10;
-
-            % 左侧: 目标函数
-            objPanel = uipanel(midGrid);
-            objPanel.Title = '目标函数';
-            objPanel.FontWeight = 'bold';
-            objPanel.BackgroundColor = [0.97, 0.97, 1.0];
-
-            objGrid = uigridlayout(objPanel, [2, 1]);
-            objGrid.RowHeight = {30, '1x'};
-            objGrid.Padding = [8, 8, 8, 8];
-            objGrid.RowSpacing = 6;
-
-            objBtnGrid = uigridlayout(objGrid, [1, 3]);
-            objBtnGrid.ColumnWidth = {'fit', 'fit', '1x'};
-            objBtnGrid.Padding = [0, 0, 0, 0];
-            objBtnGrid.ColumnSpacing = 6;
-
-            addObjBtn = uibutton(objBtnGrid, 'Text', '+添加目标');
-            addObjBtn.ButtonPushedFcn = @(~, ~) app.fwAddObjective();
-
-            delObjBtn = uibutton(objBtnGrid, 'Text', '删除');
-            delObjBtn.ButtonPushedFcn = @(~, ~) app.fwDeleteObjective();
-
-            app.FormulaObjectivesTable = uitable(objGrid);
-            app.FormulaObjectivesTable.Layout.Row = 2;
-            app.FormulaObjectivesTable.ColumnName = {'名称', '类型', '表达式'};
-            app.FormulaObjectivesTable.ColumnEditable = [true, true, true];
-            app.FormulaObjectivesTable.ColumnFormat = {'char', {'minimize', 'maximize'}, 'char'};
-            app.FormulaObjectivesTable.ColumnWidth = {100, 80, 'auto'};
-            app.FormulaObjectivesTable.Data = cell(0, 3);
-            app.FormulaObjectivesTable.RowName = 'numbered';
-
-            % 右侧: 约束条件
-            conPanel = uipanel(midGrid);
-            conPanel.Title = '约束条件';
-            conPanel.FontWeight = 'bold';
-            conPanel.BackgroundColor = [1.0, 0.97, 0.97];
-
-            conGrid = uigridlayout(conPanel, [2, 1]);
-            conGrid.RowHeight = {30, '1x'};
-            conGrid.Padding = [8, 8, 8, 8];
-            conGrid.RowSpacing = 6;
-
-            conBtnGrid = uigridlayout(conGrid, [1, 3]);
-            conBtnGrid.ColumnWidth = {'fit', 'fit', '1x'};
-            conBtnGrid.Padding = [0, 0, 0, 0];
-            conBtnGrid.ColumnSpacing = 6;
-
-            addConBtn = uibutton(conBtnGrid, 'Text', '+添加约束');
-            addConBtn.ButtonPushedFcn = @(~, ~) app.fwAddConstraint();
-
-            delConBtn = uibutton(conBtnGrid, 'Text', '删除');
-            delConBtn.ButtonPushedFcn = @(~, ~) app.fwDeleteConstraint();
-
-            app.FormulaConstraintsTable = uitable(conGrid);
-            app.FormulaConstraintsTable.Layout.Row = 2;
-            app.FormulaConstraintsTable.ColumnName = {'名称', '类型', '表达式'};
-            app.FormulaConstraintsTable.ColumnEditable = [true, true, true];
-            app.FormulaConstraintsTable.ColumnFormat = {'char', {'inequality', 'equality'}, 'char'};
-            app.FormulaConstraintsTable.ColumnWidth = {100, 80, 'auto'};
-            app.FormulaConstraintsTable.Data = cell(0, 3);
-            app.FormulaConstraintsTable.RowName = 'numbered';
-
-            % 底部: 预览区域和操作按钮
-            bottomPanel = uipanel(outerGrid);
-            bottomPanel.Title = '验证与预览';
-            bottomPanel.FontWeight = 'bold';
-            bottomPanel.BackgroundColor = [0.97, 0.97, 0.97];
-
-            bottomGrid = uigridlayout(bottomPanel, [2, 1]);
-            bottomGrid.RowHeight = {'1x', 35};
-            bottomGrid.Padding = [8, 8, 8, 8];
-            bottomGrid.RowSpacing = 6;
-
-            app.FormulaPreviewArea = uitextarea(bottomGrid);
-            app.FormulaPreviewArea.Editable = 'off';
-            app.FormulaPreviewArea.FontName = 'Consolas';
-            app.FormulaPreviewArea.Value = {'点击"验证并预览"查看公式解析结果。'};
-
-            actionGrid = uigridlayout(bottomGrid, [1, 5]);
-            actionGrid.ColumnWidth = {'fit', 'fit', 'fit', 'fit', '1x'};
-            actionGrid.Padding = [0, 0, 0, 0];
-            actionGrid.ColumnSpacing = 8;
-
-            validateBtn = uibutton(actionGrid, 'Text', '验证并预览');
-            validateBtn.ButtonPushedFcn = @(~, ~) app.fwValidateAndPreview();
-
-            syncFromProbBtn = uibutton(actionGrid, 'Text', '从问题配置同步');
-            syncFromProbBtn.ButtonPushedFcn = @(~, ~) app.fwSyncFromProblem();
-
-            exportBtn = uibutton(actionGrid, 'Text', '导出到问题配置');
-            exportBtn.ButtonPushedFcn = @(~, ~) app.fwExportToProblem();
-
-            clearBtn = uibutton(actionGrid, 'Text', '清空');
-            clearBtn.ButtonPushedFcn = @(~, ~) app.fwClearAll();
-        end
-
         function initializePhase2Components(app)
             % initializePhase2Components 初始化Phase 2集成组件
 
@@ -1509,90 +1438,24 @@ classdef MAPOGUI < handle
                 app.dryRunManager = [];
             end
 
-            % 试算结果缓存（公式工作台直接使用）
+            % 试算结果缓存（表达式验证使用）
             app.dryRunResult = [];
-
-            % 注册标签页切换回调
-            app.TabGroup.SelectionChangedFcn = @(~, event) app.tabGroupSelectionChanged(event);
         end
 
-        function tabGroupSelectionChanged(app, event)
-            % tabGroupSelectionChanged 标签页切换回调
-
-            selectedTab = app.TabGroup.SelectedTab;
-
-            if selectedTab == app.FormulaWorkbenchTab
-                % 切换到公式工作台时更新状态
-                if ~isempty(app.dryRunResult)
-                    app.FormulaStatusLabel.Text = '试算数据可用';
-                    app.FormulaStatusLabel.FontColor = [0.2, 0.6, 0.2];
-                else
-                    app.FormulaStatusLabel.Text = '未执行试算（仅语法验证可用）';
-                    app.FormulaStatusLabel.FontColor = [0.8, 0.5, 0.0];
-                end
-            end
-        end
-
-        function fwAddObjective(app)
-            % fwAddObjective 添加目标函数行
-
-            currentData = app.FormulaObjectivesTable.Data;
-            idx = size(currentData, 1) + 1;
-            newRow = {sprintf('Obj%d', idx), 'minimize', ''};
-            app.FormulaObjectivesTable.Data = [currentData; newRow];
-        end
-
-        function fwDeleteObjective(app)
-            % fwDeleteObjective 删除选中的目标函数行
-
-            selection = app.FormulaObjectivesTable.Selection;
-            if isempty(selection)
-                uialert(app.UIFigure, '请先选择要删除的行', '删除目标');
-                return;
-            end
-            currentData = app.FormulaObjectivesTable.Data;
-            rowsToDelete = unique(selection(:, 1));
-            currentData(rowsToDelete, :) = [];
-            app.FormulaObjectivesTable.Data = currentData;
-        end
-
-        function fwAddConstraint(app)
-            % fwAddConstraint 添加约束条件行
-
-            currentData = app.FormulaConstraintsTable.Data;
-            idx = size(currentData, 1) + 1;
-            newRow = {sprintf('Con%d', idx), 'inequality', ''};
-            app.FormulaConstraintsTable.Data = [currentData; newRow];
-        end
-
-        function fwDeleteConstraint(app)
-            % fwDeleteConstraint 删除选中的约束条件行
-
-            selection = app.FormulaConstraintsTable.Selection;
-            if isempty(selection)
-                uialert(app.UIFigure, '请先选择要删除的行', '删除约束');
-                return;
-            end
-            currentData = app.FormulaConstraintsTable.Data;
-            rowsToDelete = unique(selection(:, 1));
-            currentData(rowsToDelete, :) = [];
-            app.FormulaConstraintsTable.Data = currentData;
-        end
-
-        function fwValidateAndPreview(app)
-            % fwValidateAndPreview 验证所有公式并预览结果
+        function validateAllExpressions(app)
+            % validateAllExpressions 验证所有目标和约束表达式
 
             lines = {};
             hasError = false;
 
             % 验证目标函数
-            objData = app.FormulaObjectivesTable.Data;
+            objData = app.ObjectivesTable.Data;
             if ~isempty(objData)
                 lines{end+1} = '=== 目标函数 ===';
                 for i = 1:size(objData, 1)
                     name = objData{i, 1};
                     type = objData{i, 2};
-                    expr = objData{i, 3};
+                    expr = objData{i, 3};  % 表达式在第3列
 
                     if isempty(strtrim(char(string(expr))))
                         lines{end+1} = sprintf('  [%d] %s (%s): (空表达式)', i, name, type);
@@ -1600,17 +1463,15 @@ classdef MAPOGUI < handle
                         continue;
                     end
 
-                    % 语法验证
-                    [valid, msg, identifiers] = app.fwValidateExpression(expr);
+                    [valid, msg, identifiers] = app.validateExpression(expr);
                     if valid
                         idStr = strjoin(identifiers, ', ');
                         lines{end+1} = sprintf('  [%d] %s (%s): 语法正确', i, name, type);
                         lines{end+1} = sprintf('       表达式: %s', expr);
                         lines{end+1} = sprintf('       引用: %s', idStr);
 
-                        % 如果有试算结果，尝试预览值
                         if ~isempty(app.dryRunResult)
-                            previewVal = app.fwTryEvaluate(expr);
+                            previewVal = app.tryEvaluateExpression(expr);
                             if ~isnan(previewVal)
                                 lines{end+1} = sprintf('       预览值: %.6g', previewVal);
                             end
@@ -1624,13 +1485,13 @@ classdef MAPOGUI < handle
             end
 
             % 验证约束条件
-            conData = app.FormulaConstraintsTable.Data;
+            conData = app.ConstraintsTable.Data;
             if ~isempty(conData)
                 lines{end+1} = '=== 约束条件 ===';
                 for i = 1:size(conData, 1)
                     name = conData{i, 1};
                     type = conData{i, 2};
-                    expr = conData{i, 3};
+                    expr = conData{i, 3};  % 表达式在第3列
 
                     if isempty(strtrim(char(string(expr))))
                         lines{end+1} = sprintf('  [%d] %s (%s): (空表达式)', i, name, type);
@@ -1638,7 +1499,7 @@ classdef MAPOGUI < handle
                         continue;
                     end
 
-                    [valid, msg, identifiers] = app.fwValidateExpression(expr);
+                    [valid, msg, identifiers] = app.validateExpression(expr);
                     if valid
                         idStr = strjoin(identifiers, ', ');
                         lines{end+1} = sprintf('  [%d] %s (%s): 语法正确', i, name, type);
@@ -1646,7 +1507,7 @@ classdef MAPOGUI < handle
                         lines{end+1} = sprintf('       引用: %s', idStr);
 
                         if ~isempty(app.dryRunResult)
-                            previewVal = app.fwTryEvaluate(expr);
+                            previewVal = app.tryEvaluateExpression(expr);
                             if ~isnan(previewVal)
                                 lines{end+1} = sprintf('       预览值: %.6g', previewVal);
                             end
@@ -1662,19 +1523,123 @@ classdef MAPOGUI < handle
                 lines{end+1} = '(未定义任何目标或约束，请先添加)';
             end
 
-            app.FormulaPreviewArea.Value = lines;
+            app.ExprPreviewArea.Value = lines;
 
             if hasError
-                app.FormulaStatusLabel.Text = '存在错误';
-                app.FormulaStatusLabel.FontColor = [0.8, 0.2, 0.2];
+                app.ExprValidationStatusLabel.Text = '存在错误';
+                app.ExprValidationStatusLabel.FontColor = [0.8, 0.2, 0.2];
             else
-                app.FormulaStatusLabel.Text = '全部验证通过';
-                app.FormulaStatusLabel.FontColor = [0.2, 0.6, 0.2];
+                app.ExprValidationStatusLabel.Text = '全部验证通过';
+                app.ExprValidationStatusLabel.FontColor = [0.2, 0.6, 0.2];
             end
         end
 
-        function [valid, msg, identifiers] = fwValidateExpression(~, expr)
-            % fwValidateExpression 验证单个表达式语法
+        function validateObjectiveExpressions(app)
+            % validateObjectiveExpressions 仅验证目标表达式
+
+            lines = {};
+            hasError = false;
+
+            objData = app.ObjectivesTable.Data;
+            if ~isempty(objData)
+                lines{end+1} = '=== 目标函数 ===';
+                for i = 1:size(objData, 1)
+                    name = objData{i, 1};
+                    type = objData{i, 2};
+                    expr = objData{i, 3};
+
+                    if isempty(strtrim(char(string(expr))))
+                        lines{end+1} = sprintf('  [%d] %s (%s): (空表达式)', i, name, type);
+                        hasError = true;
+                        continue;
+                    end
+
+                    [valid, msg, identifiers] = app.validateExpression(expr);
+                    if valid
+                        idStr = strjoin(identifiers, ', ');
+                        lines{end+1} = sprintf('  [%d] %s (%s): 语法正确', i, name, type);
+                        lines{end+1} = sprintf('       表达式: %s', expr);
+                        lines{end+1} = sprintf('       引用: %s', idStr);
+
+                        if ~isempty(app.dryRunResult)
+                            previewVal = app.tryEvaluateExpression(expr);
+                            if ~isnan(previewVal)
+                                lines{end+1} = sprintf('       预览值: %.6g', previewVal);
+                            end
+                        end
+                    else
+                        lines{end+1} = sprintf('  [%d] %s (%s): 语法错误 - %s', i, name, type, msg);
+                        hasError = true;
+                    end
+                end
+            else
+                lines{end+1} = '(未定义任何目标)';
+            end
+
+            app.ExprPreviewArea.Value = lines;
+            if hasError
+                app.ExprValidationStatusLabel.Text = '目标表达式存在错误';
+                app.ExprValidationStatusLabel.FontColor = [0.8, 0.2, 0.2];
+            else
+                app.ExprValidationStatusLabel.Text = '目标表达式验证通过';
+                app.ExprValidationStatusLabel.FontColor = [0.2, 0.6, 0.2];
+            end
+        end
+
+        function validateConstraintExpressions(app)
+            % validateConstraintExpressions 仅验证约束表达式
+
+            lines = {};
+            hasError = false;
+
+            conData = app.ConstraintsTable.Data;
+            if ~isempty(conData)
+                lines{end+1} = '=== 约束条件 ===';
+                for i = 1:size(conData, 1)
+                    name = conData{i, 1};
+                    type = conData{i, 2};
+                    expr = conData{i, 3};
+
+                    if isempty(strtrim(char(string(expr))))
+                        lines{end+1} = sprintf('  [%d] %s (%s): (空表达式)', i, name, type);
+                        hasError = true;
+                        continue;
+                    end
+
+                    [valid, msg, identifiers] = app.validateExpression(expr);
+                    if valid
+                        idStr = strjoin(identifiers, ', ');
+                        lines{end+1} = sprintf('  [%d] %s (%s): 语法正确', i, name, type);
+                        lines{end+1} = sprintf('       表达式: %s', expr);
+                        lines{end+1} = sprintf('       引用: %s', idStr);
+
+                        if ~isempty(app.dryRunResult)
+                            previewVal = app.tryEvaluateExpression(expr);
+                            if ~isnan(previewVal)
+                                lines{end+1} = sprintf('       预览值: %.6g', previewVal);
+                            end
+                        end
+                    else
+                        lines{end+1} = sprintf('  [%d] %s (%s): 语法错误 - %s', i, name, type, msg);
+                        hasError = true;
+                    end
+                end
+            else
+                lines{end+1} = '(未定义任何约束)';
+            end
+
+            app.ExprPreviewArea.Value = lines;
+            if hasError
+                app.ExprValidationStatusLabel.Text = '约束表达式存在错误';
+                app.ExprValidationStatusLabel.FontColor = [0.8, 0.2, 0.2];
+            else
+                app.ExprValidationStatusLabel.Text = '约束表达式验证通过';
+                app.ExprValidationStatusLabel.FontColor = [0.2, 0.6, 0.2];
+            end
+        end
+
+        function [valid, msg, identifiers] = validateExpression(~, expr)
+            % validateExpression 验证单个表达式语法
             %
             % 输出:
             %   valid - 是否合法
@@ -1700,8 +1665,8 @@ classdef MAPOGUI < handle
             end
         end
 
-        function val = fwTryEvaluate(app, expr)
-            % fwTryEvaluate 尝试用试算结果评估表达式
+        function val = tryEvaluateExpression(app, expr)
+            % tryEvaluateExpression 尝试用试算结果评估表达式
             %
             % 输出: val - 评估结果，失败返回NaN
 
@@ -1717,7 +1682,7 @@ classdef MAPOGUI < handle
                 % 构建lookup函数
                 dryResult = app.dryRunResult;
                 context = struct();
-                context.lookup = @(id) app.fwLookupIdentifier(id, dryResult);
+                context.lookup = @(id) app.lookupIdentifier(id, dryResult);
 
                 [result, ~] = ExpressionEngine.evaluate(compiled, context);
                 val = result.value;
@@ -1726,8 +1691,8 @@ classdef MAPOGUI < handle
             end
         end
 
-        function item = fwLookupIdentifier(~, id, dryResult)
-            % fwLookupIdentifier 从试算结果中查找标识符的值
+        function item = lookupIdentifier(~, id, dryResult)
+            % lookupIdentifier 从试算结果中查找标识符的值
 
             item = struct('value', 0, 'dims', zeros(1, 7));
 
@@ -1755,91 +1720,6 @@ classdef MAPOGUI < handle
                        isfield(dryResult.parameters, name)
                         item.value = dryResult.parameters.(name);
                     end
-            end
-        end
-
-        function fwSyncFromProblem(app)
-            % fwSyncFromProblem 从问题配置标签同步目标和约束
-
-            % 同步目标
-            objData = app.ObjectivesTable.Data;
-            if ~isempty(objData)
-                fwObjData = cell(size(objData, 1), 3);
-                for i = 1:size(objData, 1)
-                    fwObjData{i, 1} = objData{i, 1};  % 名称
-                    fwObjData{i, 2} = objData{i, 2};  % 类型
-                    fwObjData{i, 3} = '';
-                    if size(objData, 2) >= 4 && ~isempty(objData{i, 4})
-                        fwObjData{i, 3} = objData{i, 4};  % 表达式/描述
-                    end
-                end
-                app.FormulaObjectivesTable.Data = fwObjData;
-            end
-
-            % 同步约束
-            conData = app.ConstraintsTable.Data;
-            if ~isempty(conData)
-                fwConData = cell(size(conData, 1), 3);
-                for i = 1:size(conData, 1)
-                    fwConData{i, 1} = conData{i, 1};  % 名称
-                    fwConData{i, 2} = conData{i, 2};  % 类型
-                    fwConData{i, 3} = '';
-                    if size(conData, 2) >= 3 && ~isempty(conData{i, 3})
-                        fwConData{i, 3} = conData{i, 3};  % 表达式
-                    end
-                end
-                app.FormulaConstraintsTable.Data = fwConData;
-            end
-
-            app.FormulaStatusLabel.Text = '已从问题配置同步';
-            app.FormulaStatusLabel.FontColor = [0.2, 0.6, 0.2];
-        end
-
-        function fwExportToProblem(app)
-            % fwExportToProblem 将公式工作台的目标和约束导出到问题配置标签
-
-            % 导出目标
-            fwObjData = app.FormulaObjectivesTable.Data;
-            if ~isempty(fwObjData)
-                objData = cell(size(fwObjData, 1), 4);
-                for i = 1:size(fwObjData, 1)
-                    objData{i, 1} = fwObjData{i, 1};  % 名称
-                    objData{i, 2} = fwObjData{i, 2};  % 类型
-                    objData{i, 3} = 1.0;               % 权重
-                    objData{i, 4} = fwObjData{i, 3};  % 表达式
-                end
-                app.ObjectivesTable.Data = objData;
-            end
-
-            % 导出约束
-            fwConData = app.FormulaConstraintsTable.Data;
-            if ~isempty(fwConData)
-                conData = cell(size(fwConData, 1), 4);
-                for i = 1:size(fwConData, 1)
-                    conData{i, 1} = fwConData{i, 1};  % 名称
-                    conData{i, 2} = fwConData{i, 2};  % 类型
-                    conData{i, 3} = fwConData{i, 3};  % 表达式
-                    conData{i, 4} = '';                 % 描述
-                end
-                app.ConstraintsTable.Data = conData;
-            end
-
-            app.FormulaStatusLabel.Text = '已导出到问题配置';
-            app.FormulaStatusLabel.FontColor = [0.2, 0.6, 0.2];
-            uialert(app.UIFigure, '目标和约束已导出到"问题配置"标签页', ...
-                '导出成功', 'Icon', 'success');
-        end
-
-        function fwClearAll(app)
-            % fwClearAll 清空公式工作台
-
-            answer = questdlg('确定要清空所有目标和约束吗?', '清空确认', '是', '否', '否');
-            if strcmp(answer, '是')
-                app.FormulaObjectivesTable.Data = cell(0, 3);
-                app.FormulaConstraintsTable.Data = cell(0, 3);
-                app.FormulaPreviewArea.Value = {'已清空。'};
-                app.FormulaStatusLabel.Text = '已清空';
-                app.FormulaStatusLabel.FontColor = [0.4, 0.4, 0.4];
             end
         end
 
@@ -1900,21 +1780,23 @@ classdef MAPOGUI < handle
                 end
 
                 if isfield(prob, 'objectives') && ~isempty(prob.objectives)
-                    objData = cell(length(prob.objectives), 4);
+                    objData = cell(length(prob.objectives), 6);
                     for i = 1:length(prob.objectives)
                         obj_i = prob.objectives(i);
                         objData{i, 1} = obj_i.name;
                         objData{i, 2} = 'minimize';
                         if isfield(obj_i, 'type'), objData{i, 2} = obj_i.type; end
-                        objData{i, 3} = 1.0;
+                        objData{i, 3} = '';
+                        if isfield(obj_i, 'expression'), objData{i, 3} = obj_i.expression; end
                         objData{i, 4} = '';
-                        if isfield(obj_i, 'expression'), objData{i, 4} = obj_i.expression; end
+                        objData{i, 5} = 1.0;
+                        objData{i, 6} = '';
                     end
                     app.ObjectivesTable.Data = objData;
                 end
 
                 if isfield(prob, 'constraints') && ~isempty(prob.constraints)
-                    conData = cell(length(prob.constraints), 4);
+                    conData = cell(length(prob.constraints), 5);
                     for i = 1:length(prob.constraints)
                         con = prob.constraints(i);
                         conData{i, 1} = con.name;
@@ -1923,6 +1805,7 @@ classdef MAPOGUI < handle
                         conData{i, 3} = '';
                         if isfield(con, 'expression'), conData{i, 3} = con.expression; end
                         conData{i, 4} = '';
+                        conData{i, 5} = '';
                     end
                     app.ConstraintsTable.Data = conData;
                 end
@@ -1996,9 +1879,9 @@ classdef MAPOGUI < handle
         end
 
         function createRunResultsTab(app)
-            % 创建 Tab 6: 运行与结果
+            % 创建 Tab 5: 运行与结果
             app.RunResultsTab = uitab(app.TabGroup);
-            app.RunResultsTab.Title = '6. 运行与结果';
+            app.RunResultsTab.Title = '5. 运行与结果';
             app.RunResultsTab.BackgroundColor = [0.96, 0.96, 0.96];
 
             outerGrid = uigridlayout(app.RunResultsTab, [3, 2]);

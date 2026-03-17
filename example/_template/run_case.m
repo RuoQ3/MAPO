@@ -56,14 +56,14 @@ function results = run_case(configFile)
             validator.printReport();
             error('配置验证失败。请按上述建议修复配置文件。');
         else
-            fprintf('  ✓ 配置验证通过\n');
+            fprintf('  [OK] 配置验证通过\n');
             % 打印警告（如果有）
             warnings = [];
             [~, allIssues] = validator.validate();
             if length(allIssues) > 0
                 fprintf('\n配置提示：\n');
                 for i = 1:length(allIssues)
-                    fprintf('  • %s\n', allIssues{i});
+                    fprintf('  - %s\n', allIssues{i});
                 end
             end
         end

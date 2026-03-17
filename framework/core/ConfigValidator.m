@@ -78,7 +78,7 @@ classdef ConfigValidator
             % printReport 打印验证报告
 
             if isempty(obj.issues) && isempty(obj.warnings)
-                fprintf('✓ 配置验证通过！所有检查项正常。\n\n');
+                fprintf('[OK] 配置验证通过！所有检查项正常。\n\n');
                 return;
             end
 
@@ -109,7 +109,7 @@ classdef ConfigValidator
             % 检查基本结构完整性
 
             if ~isfield(obj.config, 'problem')
-                obj.addIssue('缺少必需字段 ''problem''');
+                obj.addIssue(sprintf('缺少必需字段 ''problem''。\n  示例: {"problem": {"name": "MyOptimization", "variables": [...], "objectives": [...]}}'));
             end
 
             if ~isfield(obj.config, 'simulator')
@@ -119,12 +119,12 @@ classdef ConfigValidator
             if isfield(obj.config, 'problem')
                 problem = obj.config.problem;
                 if ~isfield(problem, 'name')
-                    obj.addIssue('problem.name 未定义');
+                    obj.addIssue(sprintf('problem.name 未定义。\n  请添加: "name": "MyOptimization"'));
                 end
                 if ~isfield(problem, 'variables')
                     obj.addIssue('problem.variables 未定义');
                 elseif isempty(problem.variables)
-                    obj.addIssue('problem.variables 为空，至少需要1个变量');
+                    obj.addIssue(sprintf('problem.variables 为空，至少需要1个变量。\n  示例: {"name": "TEMP", "type": "continuous", "lowerBound": 300, "upperBound": 500}'));
                 else
                     % 验证变量定义的完整性
                     obj.validateVariablesDefinition(problem.variables);
@@ -132,7 +132,7 @@ classdef ConfigValidator
                 if ~isfield(problem, 'objectives')
                     obj.addIssue('problem.objectives 未定义');
                 elseif isempty(problem.objectives)
-                    obj.addIssue('problem.objectives 为空，至少需要1个目标');
+                    obj.addIssue(sprintf('problem.objectives 为空，至少需要1个目标。\n  示例: {"name": "COST", "type": "minimize"}'));
                 end
                 if isfield(problem, 'evaluator')
                     obj.validateEvaluatorDef(problem.evaluator);
@@ -354,7 +354,7 @@ classdef ConfigValidator
 
                 % 检查变量类型
                 if ~isfield(var, 'type')
-                    obj.addWarning(sprintf('variables[%d] (%s) 缺少 ''type'' 字段，建议指定', i, var.name));
+                    obj.addWarning(sprintf('variables[%d] (%s) 缺少 ''type'' 字段，建议指定。\n  有效类型: continuous, integer, discrete, categorical', i, var.name));
                 end
 
                 % 检查变量范围（对于连续和离散变量）
@@ -381,7 +381,7 @@ classdef ConfigValidator
             % 验证评估器定义
 
             if ~isfield(evaluator, 'type')
-                obj.addIssue('problem.evaluator 缺少 ''type'' 字段');
+                obj.addIssue(sprintf('problem.evaluator 缺少 ''type'' 字段。\n  常用类型: ExpressionEvaluator, MyCaseEvaluator, ORCEvaluator, ADNProductionEvaluator'));
                 return;
             end
 

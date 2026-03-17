@@ -1,0 +1,47 @@
+{
+  "problem": {
+    "name": "MinimalExample",
+    "variables": [
+      {
+        "name": "FEED_TEMP",
+        "type": "continuous",
+        "lowerBound": 300,
+        "upperBound": 500,
+        "unit": "K"
+      }
+    ],
+    "objectives": [
+      {
+        "name": "COST",
+        "type": "minimize",
+        "expression": "result.AnnualCost"
+      }
+    ],
+    "evaluator": {
+      "type": "ExpressionEvaluator",
+      "timeout": 300
+    }
+  },
+  "simulator": {
+    "type": "Aspen",
+    "settings": {
+      "modelPath": "C:/path/to/your/model.bkp",
+      "visible": false
+    },
+    "nodeMapping": {
+      "variables": {
+        "FEED_TEMP": "\\Data\\Streams\\FEED\\Input\\TEMP\\MIXED"
+      },
+      "results": {
+        "AnnualCost": "\\Data\\Flowsheeting Options\\Calculator\\C-1\\Output\\WRITE_VAL\\1"
+      }
+    }
+  },
+  "algorithm": {
+    "type": "NSGA-II",
+    "parameters": {
+      "populationSize": 20,
+      "maxGenerations": 10
+    }
+  }
+}

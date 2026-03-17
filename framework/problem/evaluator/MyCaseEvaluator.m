@@ -23,7 +23,10 @@ classdef MyCaseEvaluator < Evaluator
     %     problem.evaluator.economicParameters = { ... }  % 可选
     %
     % 说明:
-    %   - 最大化目标需要在此处取负值（框架内部统一为最小化）
+    %   - 自定义评估器（如本文件）中，最大化目标需要手动取负值，
+    %     因为框架内部统一按最小化处理。
+    %   - 如果使用 ExpressionEvaluator，则无需手动取负，
+    %     只需在 JSON 配置中设置 "type": "maximize"，框架会自动处理。
     %   - 仿真失败/异常应返回惩罚值（默认 1e8）
 
     properties
@@ -89,6 +92,8 @@ classdef MyCaseEvaluator < Evaluator
                 efficiency = obj.tryGetResultValue('EFFICIENCY', NaN);     % 0-1 或 %
 
                 % 目标 1：利润（最大化 -> 取负最小化）
+                % 注意：自定义评估器需手动取负。若改用 ExpressionEvaluator，
+                % 只需在 JSON 中写 "type": "maximize"，无需手动处理。
                 objective1 = 0;
                 if ~isnan(productFlow) && ~isnan(energyUsage)
                     annualRevenue = productFlow * obj.operatingHours * obj.productPrice / 1000; % $/year
@@ -98,6 +103,7 @@ classdef MyCaseEvaluator < Evaluator
                 end
 
                 % 目标 2：效率（最大化 -> 取负最小化；若为百分比请自行统一单位）
+                % 同上：自定义评估器需手动取负，ExpressionEvaluator 自动处理。
                 objective2 = 0;
                 if ~isnan(efficiency)
                     if efficiency > 1
