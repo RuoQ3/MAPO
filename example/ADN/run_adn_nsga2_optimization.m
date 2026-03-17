@@ -2,9 +2,14 @@
 % ADN生产工艺多目标优化 - NSGA-II
 % ADN Production Process Multi-objective Optimization using NSGA-II
 %
+% 根据最小化规范改进：
+%   - 所有目标统一使用 "maximize" 类型
+%   - ADNProductionEvaluator 会自动处理转换为最小化形式
+%   - 使用 resultMapping 简化仿真器配置
+%
 % 优化目标:
-%   1. 最大化ADN质量分数
-%   2. 最大化ADN质量流量
+%   1. 最大化ADN质量分数（maximize）
+%   2. 最大化ADN质量流量（maximize）
 %
 % 设计变量:
 %   1. T0301_BF - 塔底采出比 [0.3, 0.9]
@@ -18,8 +23,9 @@
 clc; clear; close all;
 
 fprintf('========================================\n');
-fprintf('ADN生产工艺多目标优化\n');
+fprintf('ADN生产工艺多目标优化（改进版）\n');
 fprintf('Aspen Plus + NSGA-II\n');
+fprintf('遵循最小化规范：所有目标使用 maximize 类型\n');
 fprintf('========================================\n\n');
 
 % 添加框架路径
@@ -54,24 +60,22 @@ end
 simConfig = SimulatorConfig('Aspen');
 simConfig.set('modelPath', modelPath);
 simConfig.set('timeout', 300);           % 仿真超时时间(秒)
-simConfig.set('visible', true);          % Aspen可见（调试时设为true）
+simConfig.set('visible', false);         % Aspen可见性（false时不显示界面）
 simConfig.set('autoSave', false);        % 不自动保存
 
-% 配置节点映射（根据参考代码）
-% 参考: E:\Project\Chemical Design Competition\Aspen Link\Matlab2Aspen Plus\core\setAspenParams.m
+% 配置变量映射 - 设置变量到Aspen节点的映射
 simConfig.setNodeMapping('T0301_BF', '\Data\Blocks\T0301\Input\B:F');
-simConfig.setNodeMapping('T0301_FEED_STAGE', '\Data\Blocks\T0301\Input\FEED_STAGE\0318');  % 注意需要指定进料流股
+simConfig.setNodeMapping('T0301_FEED_STAGE', '\Data\Blocks\T0301\Input\FEED_STAGE\0318');
 simConfig.setNodeMapping('T0301_BASIS_RR', '\Data\Blocks\T0301\Input\BASIS_RR');
 
-% 配置结果映射（根据参考代码的 calculateObjectives.m）
-% ADN质量分数：\Data\Streams\0320\Output\MASSFRAC\MIXED\ADN
-% ADN质量流量：\Data\Streams\ADN\Output\MASSFLOW\MIXED\ADN
+% 配置结果映射 - 设置结果名称到Aspen节点的映射
+% 这样 evaluator.getResults({'ADN_FRAC', 'ADN_FLOW'}) 会自动查询这些节点
 simConfig.setResultMapping('ADN_FRAC', '\Data\Streams\ADN\Output\MASSFRAC\MIXED\ADN');
 simConfig.setResultMapping('ADN_FLOW', '\Data\Streams\ADN\Output\MASSFLOW\MIXED\ADN');
 
 fprintf('  模型路径: %s\n', modelPath);
 fprintf('  超时时间: %d 秒\n', 300);
-fprintf('  Aspen可见性: %s\n', simConfig.get('visible'));
+fprintf('  Aspen可见性: %s\n', mat2str(false));
 
 % 创建并连接仿真器
 simulator = AspenPlusSimulator();
@@ -97,9 +101,10 @@ fprintf('\n[3/8] 创建评估器...\n');
 
 evaluator = ADNProductionEvaluator(simulator);
 evaluator.timeout = 300;  % 超时时间
+evaluator.constraintPenalty = 1e8;  % 惩罚系数
 
 fprintf('  评估器创建完成\n');
-fprintf('  评估器类型: ADNProductionEvaluator\n');
+fprintf('  评估器类型: ADNProductionEvaluator (继承自 Evaluator)\n');
 
 %% ========================================
 %% 步骤3: 定义优化问题
@@ -110,19 +115,24 @@ fprintf('\n[4/8] 定义优化问题...\n');
 problem = OptimizationProblem('ADNProductionOptimization', ...
     'ADN生产工艺多目标优化');
 
-% 添加设计变量（根据参考代码的参数范围）
-% 参考: E:\Project\Chemical Design Competition\Aspen Link\Matlab2Aspen Plus\main.m (第20-24行)
+% 添加设计变量
 problem.addVariable(Variable('T0301_BF', 'continuous', [0.3, 0.9]));        % 塔底采出比
 problem.addVariable(Variable('T0301_FEED_STAGE', 'integer', [10, 20]));    % 进料板位置
 problem.addVariable(Variable('T0301_BASIS_RR', 'continuous', [1, 3]));     % 回流比
 
-% 添加目标函数（最大化转为最小化）
-problem.addObjective(Objective('ADN_FRAC', 'minimize', 'Description', '负的ADN质量分数'));
-problem.addObjective(Objective('ADN_FLOW', 'minimize', 'Description', '负的ADN质量流量'));
+% 添加目标函数 - 改进版本：直接使用 maximize
+% ADNProductionEvaluator 会根据目标类型自动处理转换
+problem.addObjective(Objective('ADN_FRAC', 'maximize', ...
+    'Description', 'ADN质量分数'));
+problem.addObjective(Objective('ADN_FLOW', 'maximize', ...
+    'Description', 'ADN质量流量'));
 
 % 设置问题类型和评估器
 problem.problemType = 'multi-objective';
-problem.evaluator = evaluator;
+problem.setEvaluator(evaluator);
+
+% 重要：将问题关联到评估器，以便评估器能访问目标类型信息
+evaluator.setProblem(problem);
 
 fprintf('  变量数: %d\n', problem.getNumberOfVariables());
 fprintf('    1. T0301_BF (塔底采出比): [0.3, 0.9]\n');
@@ -139,11 +149,10 @@ fprintf('  问题类型: %s\n', problem.problemType);
 
 fprintf('\n[5/8] 配置NSGA-II算法...\n');
 
-% 算法参数配置（参考旧代码）
-% 参考: E:\Project\Chemical Design Competition\Aspen Link\Matlab2Aspen Plus\main.m (第27-28行)
+% 算法参数配置
 algoConfig = struct();
-algoConfig.populationSize = 10;             % 种群大小（参考代码）
-algoConfig.maxGenerations = 5;              % 最大迭代代数（参考代码）
+algoConfig.populationSize = 10;             % 种群大小
+algoConfig.maxGenerations = 5;              % 最大迭代代数
 algoConfig.crossoverRate = 0.9;             % 交叉概率
 algoConfig.mutationRate = 1.0;              % 变异率(归一化)
 algoConfig.crossoverDistIndex = 20;         % SBX分布指数
@@ -221,6 +230,7 @@ if ~isempty(results.population)
     fprintf('%s\n', repmat('-', 1, 110));
 
     % 提取Pareto前沿解的信息
+    % 注意：现在目标已经正确保存为 maximize 的形式
     paretoVars = [];
     paretoObjs = [];
     for i = 1:numParetoSolutions
@@ -228,8 +238,8 @@ if ~isempty(results.population)
         vars = ind.getVariables();
         objs = ind.getObjectives();
 
-        % 将最小化的负值转换回最大化的正值
-        ADN_FRAC = -objs(1);
+        % 现在目标值直接是最大化形式（因为 ADNProductionEvaluator 根据类型处理）
+        ADN_FRAC = -objs(1);  % 取负恢复原始值（因为内部转为最小化形式）
         ADN_FLOW = -objs(2);
 
         fprintf('%-5d | %-12.6f | %-15d | %-12.6f | %-18.6f | %-18.2f\n', ...
@@ -245,13 +255,12 @@ if ~isempty(results.population)
     for i = 1:totalSolutions
         ind = allIndividuals(i);
         objs = ind.getObjectives();
-        % 转换为最大化目标
+        % 恢复原始目标值
         ADN_FRAC = -objs(1);
         ADN_FLOW = -objs(2);
 
-        % 过滤掉失败的解（惩罚值会变成负的大数）
-        % 失败的解：objectives = [1e8, 1e8]，取负后变成[-1e8, -1e8]
-        if ADN_FRAC > -1e7 && ADN_FLOW > -1e7  % 只保留有效解
+        % 过滤掉失败的解（惩罚值会很大）
+        if ADN_FRAC > -1e7 && ADN_FLOW > -1e7
             allObjs = [allObjs; ADN_FRAC, ADN_FLOW];
             validIndices = [validIndices; i];
         end
@@ -276,7 +285,6 @@ if ~isempty(results.population)
     figure('Name', figTitle, 'Position', [100, 100, 1000, 600]);
 
     % 找出非Pareto前沿的解
-    % 创建一个逻辑数组标记哪些是Pareto解
     numValidSolutions = size(allObjs, 1);
     isParetoSolution = false(numValidSolutions, 1);
     for i = 1:numValidSolutions

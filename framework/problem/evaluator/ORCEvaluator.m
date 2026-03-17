@@ -1,4 +1,4 @@
-classdef ORCEvaluator < handle
+classdef ORCEvaluator < Evaluator
     % ORCEvaluator ORC余热回收系统评估器
     % Evaluator for ORC (Organic Rankine Cycle) Waste Heat Recovery System
     %
@@ -54,8 +54,10 @@ classdef ORCEvaluator < handle
             % 示例:
             %   evaluator = ORCEvaluator(simulator);
 
+            % 调用父类构造函数
+            obj@Evaluator();
+
             obj.simulator = simulator;
-            obj.evaluationCount = 0;
 
             % 惩罚系数（收敛失败时返回大的正值，因为是最小化问题）
             obj.constraintPenalty = 1e8;
@@ -78,65 +80,76 @@ classdef ORCEvaluator < handle
 
         function result = evaluate(obj, x)
             % evaluate 评估给定设计的目标函数值
+            % 根据 OptimizationProblem 中的 Objective 类型自动处理最大化/最小化
             %
             % 输入:
             %   x - 设计变量向量 [FLOW_S7, FLOW_S8, P_EVAP, P_COND, T_CON_OUT]
-            %       FLOW_S7 - S7流量进EV1 (kmol/hr)
-            %       FLOW_S8 - S8流量进EV2 (kmol/hr)
-            %       P_EVAP - 蒸发压力/泵出口压力 (bar)
-            %       P_COND - 冷凝压力/透平出口压力 (bar)
-            %       T_CON_OUT - 冷凝器出口温度 (C)
             %
             % 输出:
             %   result - 评估结果结构体
-            %       result.objectives - 目标函数值 [-PROFIT, -EFF]
-            %           -PROFIT - 负的ORC系统利润 ($/year)（最大化转最小化）
-            %           -EFF - 负的ORC热力学效率 (%)（最大化转最小化）
-            %
-            % 示例:
-            %   result = evaluator.evaluate([40, 50, 2.6, 1.0, 45]);
 
-            obj.evaluationCount = obj.evaluationCount + 1;
+            obj.evaluationCounter = obj.evaluationCounter + 1;
 
-            % 提取设计变量（5个变量）
+            % 提取设计变量
             FLOW_S7 = x(1);
             FLOW_S8 = x(2);
             P_EVAP = x(3);
             P_COND = x(4);
 
-            % 计算总流量
             TOTAL_FLOW = FLOW_S7 + FLOW_S8;
 
             obj.logInfo(sprintf('评估 #%d: S7=%.4f, S8=%.4f, Total=%.4f, P_EVAP=%.4f, P_COND=%.4f', ...
-                obj.evaluationCount, FLOW_S7, FLOW_S8, TOTAL_FLOW, P_EVAP, P_COND));
-
-            % 初始化结果结构体
-            result = struct();
+                obj.evaluationCounter, FLOW_S7, FLOW_S8, TOTAL_FLOW, P_EVAP, P_COND));
 
             try
                 % 步骤1: 运行Aspen Plus仿真
                 simResults = obj.runSimulation(x);
 
                 if ~simResults.success
-                    obj.logWarning('仿真失败或收敛失败，返回惩罚值');
-                    result.objectives = [obj.constraintPenalty, obj.constraintPenalty];
+                    obj.logWarning('仿真失败或收敛失败，返回错误结果');
+                    result = obj.createErrorResult('仿真失败');
                     return;
                 end
 
-                % 步骤2: 计算目标函数
-                [PROFIT, EFF] = obj.calculateObjectives(simResults);
+                % 步骤2: 计算原始目标值
+                [rawPROFIT, rawEFF] = obj.calculateObjectives(simResults);
 
-                % 步骤3: 转换为最小化问题（取负值）
-                result.objectives = [-PROFIT, -EFF];
+                % 步骤3: 根据 problem 中的 Objective 类型进行标准化处理
+                objectives = [];
+                nObjs = obj.problem.getNumberOfObjectives();
 
-                obj.logInfo(sprintf('  结果: ORC利润=%.2f $/yr, ORC效率=%.4f %%', ...
-                    PROFIT, EFF));
-                obj.logInfo(sprintf('  目标值: obj1=%.2f, obj2=%.6f', ...
-                    result.objectives(1), result.objectives(2)));
+                for i = 1:nObjs
+                    objective = obj.problem.getObjective(i);
+
+                    % 根据目标名称获取对应的计算值
+                    if strcmp(objective.name, 'PROFIT')
+                        value = rawPROFIT;
+                    elseif strcmp(objective.name, 'EFF')
+                        value = rawEFF;
+                    else
+                        obj.logWarning(sprintf('未知的目标: %s', objective.name));
+                        value = 0;
+                    end
+
+                    % 如果目标是最大化，取负（转换为最小化问题）
+                    if objective.isMaximize()
+                        value = -value;
+                    end
+
+                    objectives = [objectives, value];
+                end
+
+                % 步骤4: 构造成功结果
+                constraints = [];
+                result = obj.createSuccessResult(objectives, constraints);
+
+                obj.logInfo(sprintf('  结果: PROFIT=%.2f $/yr, EFF=%.4f %%', ...
+                    rawPROFIT, rawEFF));
+                obj.logInfo(sprintf('  目标值: [%.6f, %.6f]', objectives(1), objectives(2)));
 
             catch ME
                 obj.logError(sprintf('评估异常: %s', ME.message));
-                result.objectives = [obj.constraintPenalty, obj.constraintPenalty];
+                result = obj.createErrorResult(ME.message);
             end
         end
 

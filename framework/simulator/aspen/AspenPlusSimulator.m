@@ -156,11 +156,17 @@ classdef AspenPlusSimulator < SimulatorBase
             end
         end
 
-        function setVariables(obj, variables)
+        function setVariables(obj, variables, retryCount)
             % setVariables 设置变量到Aspen节点
             %
             % 输入:
             %   variables - 变量值向量 [1×n] 或结构体
+            %   retryCount - (内部参数) 重试次数，用于控制递归深度
+
+            % 内部参数初始化
+            if nargin < 3
+                retryCount = 0;
+            end
 
             obj.ensureConnected();
 
@@ -216,11 +222,11 @@ classdef AspenPlusSimulator < SimulatorBase
                 obj.logMessage('INFO', '变量设置完成');
 
             catch ME
-                % 检查是否为RPC错误
-                if obj.isRPCError(ME)
+                % 检查是否为RPC错误，且未超过重试次数
+                if obj.isRPCError(ME) && retryCount < obj.maxRetries
                     obj.handleRPCError();
-                    % 重试设置变量
-                    obj.setVariables(variables);
+                    % 递归重试，递增重试计数
+                    obj.setVariables(variables, retryCount + 1);
                 else
                     obj.handleError(ME);
                     error('AspenPlusSimulator:SetVariablesFailed', ...
@@ -229,17 +235,22 @@ classdef AspenPlusSimulator < SimulatorBase
             end
         end
 
-        function success = run(obj, timeout)
+        function success = run(obj, timeout, retryCount)
             % run 运行Aspen Plus仿真
             %
             % 输入:
             %   timeout - (可选) 超时时间（秒），默认从配置读取
+            %   retryCount - (内部参数) 重试次数，用于控制递归深度
             %
             % 输出:
             %   success - 布尔值，仿真是否成功
 
             obj.ensureConnected();
 
+            % 内部参数初始化
+            if nargin < 3
+                retryCount = 0;
+            end
             if nargin < 2
                 timeout = obj.getConfigValue('timeout', 300);
             end
@@ -303,11 +314,11 @@ classdef AspenPlusSimulator < SimulatorBase
             catch ME
                 elapsed = toc(startTime);
 
-                % 检查RPC错误
-                if obj.isRPCError(ME)
+                % 检查RPC错误，且未超过重试次数
+                if obj.isRPCError(ME) && retryCount < obj.maxRetries
                     obj.handleRPCError();
-                    % 重试运行
-                    success = obj.run(timeout);
+                    % 递归重试，递增重试计数
+                    success = obj.run(timeout, retryCount + 1);
                     return;
                 end
 
@@ -348,16 +359,24 @@ classdef AspenPlusSimulator < SimulatorBase
             end
         end
 
-        function results = getResults(obj, keys)
+        function results = getResults(obj, keys, retryCount)
             % getResults 从Aspen获取结果
+            % 支持通过结果名称映射（resultMapping）查询，如果映射不存在则直接当作节点路径
             %
             % 输入:
-            %   keys - 结果节点路径的cell array
+            %   keys - 结果名称或节点路径的cell array
+            %          如果配置中有resultMapping，会优先使用映射的节点路径
+            %   retryCount - (内部参数) 重试次数，用于控制递归深度
             %
             % 输出:
-            %   results - 结果结构体
+            %   results - 结果结构体，字段名为结果名称（不是节点路径）
 
             obj.ensureConnected();
+
+            % 内部参数初始化
+            if nargin < 3
+                retryCount = 0;
+            end
 
             results = struct();
 
@@ -366,19 +385,31 @@ classdef AspenPlusSimulator < SimulatorBase
             try
                 for i = 1:length(keys)
                     key = keys{i};
-                    value = obj.getNodeValue(key);
-                    results.(obj.sanitizeFieldName(key)) = value;
-                    obj.logMessage('DEBUG', '  %s = %.6g', key, value);
+
+                    % 步骤1: 确定实际的节点路径
+                    % 优先使用 resultMapping（如果存在），否则直接当作节点路径
+                    nodePath = key;
+                    if isa(obj.config, 'SimulatorConfig') && obj.config.hasResultMapping(key)
+                        nodePath = obj.config.getResultPath(key);
+                        obj.logMessage('DEBUG', '  使用resultMapping: %s -> %s', key, nodePath);
+                    end
+
+                    % 步骤2: 从Aspen获取值
+                    value = obj.getNodeValue(nodePath);
+
+                    % 步骤3: 存储结果，字段名始终是结果名称（key），不是节点路径
+                    results.(key) = value;
+                    obj.logMessage('DEBUG', '  %s (path: %s) = %.6g', key, nodePath, value);
                 end
 
                 obj.logMessage('INFO', '结果获取完成');
 
             catch ME
-                % 检查RPC错误
-                if obj.isRPCError(ME)
+                % 检查RPC错误，且未超过重试次数
+                if obj.isRPCError(ME) && retryCount < obj.maxRetries
                     obj.handleRPCError();
-                    % 重试获取结果
-                    results = obj.getResults(keys);
+                    % 递归重试，递增重试计数
+                    results = obj.getResults(keys, retryCount + 1);
                 else
                     obj.handleError(ME);
                     error('AspenPlusSimulator:GetResultsFailed', ...

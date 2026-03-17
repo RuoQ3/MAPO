@@ -30,6 +30,7 @@ classdef Population < handle
 
     properties (Access = private)
         individuals;    % Individual对象数组
+        isSorted;       % 布尔值，标记种群是否已经过快速非支配排序
     end
 
     methods
@@ -48,6 +49,7 @@ classdef Population < handle
             else
                 obj.individuals = individuals;
             end
+            obj.isSorted = false;
         end
 
         function add(obj, individual)
@@ -60,6 +62,7 @@ classdef Population < handle
             %   pop.add(ind);
 
             obj.individuals(end+1) = individual;
+            obj.isSorted = false;  % 清除排序标志
         end
 
         function addAll(obj, individuals)
@@ -72,6 +75,7 @@ classdef Population < handle
             %   pop.addAll(indArray);
 
             obj.individuals = [obj.individuals, individuals];
+            obj.isSorted = false;  % 清除排序标志
         end
 
         function remove(obj, index)
@@ -85,6 +89,7 @@ classdef Population < handle
 
             if index > 0 && index <= length(obj.individuals)
                 obj.individuals(index) = [];
+                obj.isSorted = false;  % 清除排序标志
             end
         end
 
@@ -214,11 +219,23 @@ classdef Population < handle
             %   evaluator - Evaluator对象
             %   parallelConfig - ParallelConfig对象
             %
+            % 说明:
+            %   如果评估器不支持并行化（如包含 COM 对象），自动回退到顺序评估
+            %
             % 示例:
             %   pop.evaluateParallel(evaluator, parallelConfig);
 
             n = length(obj.individuals);
             if n == 0
+                return;
+            end
+
+            % 检测评估器是否包含不可序列化的对象（COM 对象）
+            % COM 对象无法跨 parfor 边界传递，需要回退到顺序评估
+            if obj.hasUnsimulableEvaluator(evaluator)
+                warning('Population:UnsimulableEvaluator', ...
+                    '检测到不支持并行化的评估器（如 Aspen COM 对象），回退到顺序评估');
+                obj.evaluate(evaluator);
                 return;
             end
 
@@ -318,6 +335,9 @@ classdef Population < handle
             % 输出:
             %   front - Population对象，包含前沿个体
             %
+            % 说明:
+            %   如果种群已排序，不会重复执行非支配排序，以提高性能
+            %
             % 示例:
             %   paretoFront = pop.getParetoFront();
 
@@ -326,8 +346,10 @@ classdef Population < handle
                 return;
             end
 
-            % 执行快速非支配排序
-            obj.fastNonDominatedSort();
+            % 只在必要时执行快速非支配排序
+            if ~obj.isSorted
+                obj.fastNonDominatedSort();
+            end
 
             % 提取秩为1的个体
             frontInds = Individual.empty(0, 0);
@@ -442,6 +464,9 @@ classdef Population < handle
                 rank = rank + 1;
                 currentFront = nextFront;
             end
+
+            % 设置排序标志
+            obj.isSorted = true;
         end
 
         function calculateCrowdingDistance(obj)
@@ -606,10 +631,24 @@ classdef Population < handle
             % 输出:
             %   merged - 合并后的Population对象
             %
+            % 说明:
+            %   为避免 handle 引用污染，合并的个体会被克隆，确保原始种群的状态不受影响
+            %
             % 示例:
             %   combined = pop1.merge(pop2);
 
-            mergedInds = [obj.individuals, other.getAll()];
+            % Clone 父代种群的所有个体
+            mergedInds = Individual.empty(0, 0);
+            for i = 1:length(obj.individuals)
+                mergedInds(end+1) = obj.individuals(i).clone(); %#ok<AGROW>
+            end
+
+            % Clone 子代种群的所有个体
+            otherInds = other.getAll();
+            for i = 1:length(otherInds)
+                mergedInds(end+1) = otherInds(i).clone(); %#ok<AGROW>
+            end
+
             merged = Population(mergedInds);
         end
 
@@ -807,6 +846,45 @@ classdef Population < handle
             end
 
             fprintf('========================================\n');
+        end
+    end
+
+    methods (Access = private)
+        function tf = hasUnsimulableEvaluator(~, evaluator)
+            % hasUnsimulableEvaluator 检测评估器是否包含不可序列化的对象
+            %
+            % 输入:
+            %   evaluator - Evaluator对象
+            %
+            % 输出:
+            %   tf - 布尔值，true 表示包含 COM 对象等不可序列化对象
+            %
+            % 说明:
+            %   COM 对象（如 Aspen Plus 的 actxserver）无法跨 parfor 边界传递
+            %   此方法检测评估器是否使用了这类对象
+
+            tf = false;
+
+            % 检测 ExpressionEvaluator 是否包含 Aspen 模拟器
+            if isa(evaluator, 'ExpressionEvaluator')
+                % 检查是否有 simulator 属性
+                if isprop(evaluator, 'simulator')
+                    simulator = evaluator.simulator;
+                    if ~isempty(simulator) && isa(simulator, 'AspenPlusSimulator')
+                        tf = true;
+                        return;
+                    end
+                end
+            end
+
+            % 检测其他 COM 对象型评估器
+            if isa(evaluator, 'ADNProductionEvaluator') || ...
+               isa(evaluator, 'ORCEvaluator') || ...
+               isa(evaluator, 'DistillationEvaluator')
+                % 这些评估器可能使用 Aspen，标记为不可序列化
+                tf = true;
+                return;
+            end
         end
     end
 

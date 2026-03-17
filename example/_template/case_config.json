@@ -116,23 +116,29 @@
     "usage": [
       "1. 复制此模板到您的项目目录",
       "2. 修改problem部分定义您的优化问题",
-      "3. 修改simulator部分设置Aspen模型路径和节点映射",
+      "3. 修改simulator部分设置仿真器类型和参数",
       "4. 修改algorithm部分选择算法和参数",
-      "5. 如需自定义评估器，创建新的评估器类并修改evaluator.type",
+      "5. 创建或选择合适的评估器，修改evaluator.type",
       "6. 运行: run_case('case_config.json')"
     ],
     "variable_types": [
-      "continuous: 连续变量",
-      "integer: 整数变量",
-      "discrete: 离散变量"
+      "continuous: 连续变量（必须定义lowerBound和upperBound）",
+      "integer: 整数变量（必须定义lowerBound和upperBound）",
+      "discrete: 离散变量（必须定义lowerBound和upperBound，或values数组）",
+      "categorical: 分类变量（定义values数组）"
     ],
     "objective_types": [
       "minimize: 最小化目标",
-      "maximize: 最大化目标（内部会转为最小化）"
+      "maximize: 最大化目标（框架自动处理方向转换，无需手动改符号）"
     ],
     "constraint_types": [
-      "equality: 等式约束 (= 0)",
-      "inequality: 不等式约束 (<= 0)"
+      "inequality: 不等式约束 (表达式需要 <= 0 的形式)"
+    ],
+    "expression_prefixes": [
+      "x.VARNAME: 决策变量",
+      "result.RESNAME: 仿真结果",
+      "param.PARAM: 常数参数",
+      "derived.DERIVNAME: 衍生变量"
     ],
     "simulator_types": [
       "Aspen: Aspen Plus仿真器",
@@ -140,14 +146,33 @@
       "Python: Python脚本仿真器"
     ],
     "algorithm_types": [
-      "NSGA-II: 非支配排序遗传算法II（多目标）",
-      "PSO: 粒子群优化算法（单/多目标）"
+      "NSGA-II: 非支配排序遗传算法II（单/多目标）",
+      "PSO: 粒子群优化算法（单/多目标）",
+      "ANN-NSGA-II: 代理辅助多目标遗传算法"
     ],
     "evaluator_types": [
-      "ORCEvaluator: ORC系统评估器",
-      "ADNProductionEvaluator: ADN生产评估器",
+      "ExpressionEvaluator: 使用JSON配置表达式评估（推荐用于简单问题）",
       "MyCaseEvaluator: 自定义评估器模板",
-      "或创建您自己的评估器类"
+      "ORCEvaluator: ORC余热系统专用评估器",
+      "ADNProductionEvaluator: ADN生产工艺专用评估器",
+      "DistillationEvaluator: 精馏系统专用评估器",
+      "或创建您自己的自定义评估器类（继承Evaluator）"
+    ],
+    "mapping_format": {
+      "note": "必须使用nodeMapping.variables和nodeMapping.results的新格式",
+      "dont_use": ["resultMapping（旧格式，已弃用）"],
+      "example": {
+        "nodeMapping": {
+          "variables": {"VAR_NAME": "Aspen\\Path\\To\\Variable"},
+          "results": {"RESULT_NAME": "Aspen\\Path\\To\\Result"}
+        }
+      }
+    },
+    "validation": [
+      "- 所有连续/整数变量必须定义lowerBound和upperBound",
+      "- 所有objectives必须定义type (minimize或maximize)",
+      "- 如果使用表达式，必须使用正确的前缀 (x., result., param., derived.)",
+      "- nodeMapping中的所有result.*都必须在nodeMapping.results中有映射"
     ]
   }
 }

@@ -578,6 +578,244 @@ classdef (Abstract) AlgorithmBase < IOptimizer
             fprintf('Iteration %d | Progress: %.1f%% | Evaluations: %d/%d | Time: %.1fs\n', ...
                     iteration, progress, obj.evaluationCount, obj.maxEvaluations, elapsed);
         end
+
+        function variables = repairVariables(obj, variables)
+            % repairVariables 修复变量值以符合非连续类型约束
+            %
+            % 输入:
+            %   variables - 变量值向量 [1×n]
+            %
+            % 输出:
+            %   variables - 修复后的变量值向量
+            %
+            % 说明:
+            %   对整数变量进行圆整
+            %   对离散/分类变量映射到最近的有效值
+            %   对连续变量保持不变
+            %
+            % 示例:
+            %   repaired = obj.repairVariables([3.7, 1.3, 2.9]);
+
+            if isempty(obj.problem)
+                return;
+            end
+
+            variableSet = obj.problem.getVariableSet();
+            if isempty(variableSet)
+                return;
+            end
+
+            vars = variableSet.getVariables();
+            if length(vars) ~= length(variables)
+                error('AlgorithmBase:VariableSizeMismatch', ...
+                      '变量数量不匹配: 期望%d, 实际%d', length(vars), length(variables));
+            end
+
+            % 对每个变量进行修复
+            for i = 1:length(vars)
+                var = vars(i);
+                value = variables(i);
+
+                % 使用 denormalize 方法来处理各种类型的变量
+                % 先将值归一化再反归一化，这样可以自动处理所有类型
+                try
+                    % 对整数变量：四舍五入到整数
+                    if strcmp(var.type, 'integer')
+                        value = round(value);
+                        % 确保在边界内
+                        value = max(var.lowerBound, min(var.upperBound, value));
+                    % 对离散和分类变量：映射到最近的有效值
+                    elseif strcmp(var.type, 'discrete') || strcmp(var.type, 'categorical')
+                        % 计算归一化值，然后通过 denormalize 映射到有效值
+                        % 首先尝试找到该值在允许值中的索引
+                        values = var.values;
+                        if ~isempty(values)
+                            % 计算与所有允许值的距离
+                            if isnumeric(value) && iscell(values) && isnumeric(values{1})
+                                % 离散数值变量
+                                distances = cellfun(@(v) abs(v - value), values);
+                                [~, idx] = min(distances);
+                                value = values{idx};
+                            elseif ischar(value) || isstring(value)
+                                % 分类变量：精确匹配或返回第一个值
+                                value = char(value);
+                                found = false;
+                                for j = 1:length(values)
+                                    if ischar(values{j}) && strcmp(value, values{j})
+                                        found = true;
+                                        break;
+                                    end
+                                end
+                                if ~found
+                                    % 如果找不到精确匹配，使用第一个值
+                                    value = values{1};
+                                end
+                            else
+                                % 其他情况：使用映射到最近的有效值的逻辑
+                                n = length(values);
+                                % 先转换到 [0, 1]，再映射
+                                if isnumeric(values{1})
+                                    minVal = min(cellfun(@(v) v, values));
+                                    maxVal = max(cellfun(@(v) v, values));
+                                    if maxVal > minVal
+                                        normalized = (value - minVal) / (maxVal - minVal);
+                                        normalized = max(0, min(1, normalized));
+                                        idx = round(normalized * (n - 1)) + 1;
+                                        idx = max(1, min(n, idx));
+                                        value = values{idx};
+                                    else
+                                        value = values{1};
+                                    end
+                                else
+                                    % 无法确定数值映射，使用第一个值
+                                    value = values{1};
+                                end
+                            end
+                        end
+                    % 对连续变量：确保在边界内
+                    elseif strcmp(var.type, 'continuous')
+                        if ~isempty(var.lowerBound) && ~isempty(var.upperBound)
+                            value = max(var.lowerBound, min(var.upperBound, value));
+                        end
+                    end
+                catch
+                    % 如果出错，尝试保持原值但确保在边界内
+                    if ~isempty(var.lowerBound) && ~isempty(var.upperBound)
+                        value = max(var.lowerBound, min(var.upperBound, value));
+                    end
+                end
+
+                variables(i) = value;
+            end
+        end
+
+        function data = getIterationData(obj, iteration)
+            % getIterationData 获取用于GUI/日志的迭代数据（通用实现）
+            %
+            % 输入:
+            %   iteration - 迭代次数
+            %
+            % 输出:
+            %   data - struct包含：
+            %     - iteration: 迭代号
+            %     - evaluations: 评估次数
+            %     - bestObjectives: 当前最优目标值
+            %     - paretoFront: Pareto前沿目标值矩阵 (nSolutions x nObj)
+            %     - populationObjectives: 全种群目标值矩阵 (nInds x nObj)
+            %     - archiveSize: Pareto解数量
+            %     - feasibleRatio: 可行解比例（可选）
+            %
+            % 说明:
+            %   通用的迭代数据提取方法，子类可覆盖以添加特定信息
+
+            data = struct();
+            data.iteration = iteration;
+            data.evaluations = obj.evaluationCount;
+            data.bestObjectives = [];
+            data.paretoFront = [];
+            data.populationObjectives = [];
+            data.archiveSize = 0;
+
+            if isempty(obj.population)
+                return;
+            end
+
+            inds = obj.population.getAll();
+            if isempty(inds)
+                return;
+            end
+
+            % 尝试使用已计算的rank提取第一前沿，避免重复fastNonDominatedSort
+            frontInds = Individual.empty(0, 0);
+            try
+                for i = 1:length(inds)
+                    if inds(i).getRank() == 1
+                        frontInds(end+1) = inds(i); %#ok<AGROW>
+                    end
+                end
+            catch
+                frontInds = Individual.empty(0, 0);
+            end
+
+            if isempty(frontInds)
+                frontInds = inds;
+            end
+
+            % 提取目标值矩阵
+            nSolutions = length(frontInds);
+            if nSolutions == 0
+                return;
+            end
+
+            try
+                nObj = length(frontInds(1).getObjectives());
+            catch
+                nObj = 0;
+            end
+            if nObj <= 0
+                return;
+            end
+
+            % 全体个体目标值（用于绘制非Pareto解）
+            allObjValues = nan(length(inds), nObj);
+            for i = 1:length(inds)
+                try
+                    allObjValues(i, :) = inds(i).getObjectives();
+                catch
+                end
+            end
+
+            validAll = ~all(isnan(allObjValues), 2);
+            allObjValues = allObjValues(validAll, :);
+            data.populationObjectives = allObjValues;
+
+            objValues = nan(nSolutions, nObj);
+            for i = 1:nSolutions
+                try
+                    objValues(i, :) = frontInds(i).getObjectives();
+                catch
+                end
+            end
+
+            % 删除全NaN行（防御）
+            validRow = ~all(isnan(objValues), 2);
+            objValues = objValues(validRow, :);
+
+            data.paretoFront = objValues;
+            data.archiveSize = size(objValues, 1);
+
+            % 用每个目标的当前最小值作为"bestObjectives"，用于收敛曲线（忽略NaN/Inf）
+            best = nan(1, nObj);
+            if ~isempty(allObjValues)
+                for j = 1:nObj
+                    col = allObjValues(:, j);
+                    col = col(isfinite(col));
+                    if ~isempty(col)
+                        best(j) = min(col);
+                    end
+                end
+            end
+            if ~all(isnan(best))
+                data.bestObjectives = best;
+            end
+
+            % 可行解比例（如果有约束）
+            try
+                if ~isempty(obj.problem) && obj.problem.getNumberOfConstraints() > 0
+                    feasibleCount = 0;
+                    for i = 1:length(inds)
+                        try
+                            if inds(i).isFeasible()
+                                feasibleCount = feasibleCount + 1;
+                            end
+                        catch
+                        end
+                    end
+                    data.feasibleRatio = feasibleCount / max(1, length(inds));
+                end
+            catch
+            end
+        end
     end
 
     methods (Static)

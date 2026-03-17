@@ -70,6 +70,26 @@ out = run_smoke_algorithm('all', ...
     'ThrowOnFailure', true);
 ```
 
+### 10 分钟快速开始（3 行代码）
+
+完全不需要 Aspen Plus，直接用测试函数验证框架：
+
+```matlab
+% 第1行: 添加框架路径
+addpath(genpath('framework'));
+
+% 第2行: 加载示例配置并修改为测试模式
+run_smoke_algorithm('NSGA-II', 'Problem', 'zdt1', 'PopulationSize', 30, 'Iterations', 10);
+
+% 结果: 生成 Pareto 前沿、收敛曲线、优化日志
+% 验证通过后，可用同样的 run_case 方式接入你的 Aspen 模型
+```
+
+完整的验证步骤：
+1. **验证依赖** (30秒)：确保 MATLAB R2020a+ 可用
+2. **跑冒烟测试** (2分钟)：不依赖 Aspen，直接验证算法框架
+3. **修改配置接入仿真器** (7分钟)：更新 `case_config.json` 的 nodeMapping 和 evaluator 类型
+
 ### 💻 使用方式
 
 #### 方式一: 图形用户界面 (推荐新手使用) 🖥️
@@ -522,6 +542,126 @@ classdef MyEvaluator < Evaluator
         end
     end
 end
+```
+
+## ⚠️ 已知问题
+
+- Windows系统下Aspen Plus COM接口偶发RPC错误，已实现自动重试机制
+- 大规模种群(>500)时非支配排序效率较低，建议使用较小种群配合更多代数
+
+## 🔧 常见问题排查
+
+### 问题 1: 目标方向处理错误
+
+**症状**: 优化结果与预期相反（最大化变成最小化或反之）
+
+**原因**:
+- 在 Objective 定义中使用了 "maximize"，但评估器没有正确处理符号
+- 算法内部进行了目标值取负，但输出时没有转换回去
+
+**解决方案**:
+```json
+{
+  "problem": {
+    "objectives": [
+      {"name": "PROFIT", "type": "maximize"},
+      {"name": "COST", "type": "minimize"}
+    ]
+  }
+}
+```
+框架会自动处理目标方向，您无需手动取负。结果输出时会自动转换为您定义的原始方向。
+
+### 问题 2: 映射配置混乱 (多入口冲突)
+
+**症状**: ConfigValidator 报错 "检测到同时使用 nodeMapping 和 resultMapping"
+
+**原因**: 配置中同时使用了两种映射入口方式
+
+**解决方案**:
+```json
+{
+  "simulator": {
+    "nodeMapping": {
+      "variables": {
+        "FEED_FLOW": "\\Data\\Streams\\FEED\\Input\\TOTFLOW"
+      },
+      "results": {
+        "PRODUCT_PURITY": "\\Data\\Streams\\PRODUCT\\Output\\MASSFRAC"
+      }
+    }
+  }
+}
+```
+**不要** 同时使用 `nodeMapping` 和 `resultMapping` - 统一使用上述格式。
+
+### 问题 3: 变量边界未定义
+
+**症状**: ConfigValidator 报错 "variables[X] 缺少 lowerBound/upperBound"
+
+**原因**: 连续变量或离散变量需要显式定义范围
+
+**解决方案**:
+```json
+{
+  "problem": {
+    "variables": [
+      {
+        "name": "temperature",
+        "type": "continuous",
+        "lowerBound": 300,
+        "upperBound": 500
+      },
+      {
+        "name": "stages",
+        "type": "integer",
+        "lowerBound": 10,
+        "upperBound": 50
+      }
+    ]
+  }
+}
+```
+
+### 问题 4: 表达式前缀错误
+
+**症状**: ConfigValidator 报错 "检测到无效前缀"
+
+**原因**: 表达式中使用了不支持的前缀
+
+**有效的表达式前缀**:
+| 前缀 | 说明 | 示例 |
+|------|------|------|
+| `x.` | 决策变量 | `x.temperature * x.flow` |
+| `result.` | 仿真结果 | `result.product_flow / 1000` |
+| `param.` | 常数参数 | `param.MW * result.concentration` |
+| `derived.` | 衍生变量 | `derived.thermal_efficiency` |
+
+### 问题 5: 评估器配置不完整
+
+**症状**: ConfigValidator 报错 "ExpressionEvaluator 需要定义 objectives"
+
+**原因**: 使用 ExpressionEvaluator 时没有在配置中指定目标表达式
+
+**解决方案**:
+```json
+{
+  "problem": {
+    "evaluator": {
+      "type": "ExpressionEvaluator",
+      "objectives": [
+        {
+          "name": "COST",
+          "expression": "result.annual_cost"
+        },
+        {
+          "name": "EFFICIENCY",
+          "expression": "result.thermal_efficiency"
+        }
+      ]
+    }
+  }
+}
 ```
 
 ## ⚠️ 已知问题

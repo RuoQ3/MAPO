@@ -1,16 +1,16 @@
-classdef ADNProductionEvaluator < handle
+classdef ADNProductionEvaluator < Evaluator
     % ADNProductionEvaluator ADN生产工艺评估器
     % Evaluator for ADN Production Process Optimization
     %
     % 功能:
+    %   - 继承 Evaluator 抽象类，规范化处理目标函数
     %   - 调用Aspen Plus仿真器进行二级氢氰化工段仿真
-    %   - 计算ADN质量分数（最大化）
-    %   - 计算ADN质量流量（最大化）
-    %   - 检查工艺收敛性约束
+    %   - 计算ADN质量分数和ADN质量流量
+    %   - 根据 OptimizationProblem 中的 Objective 类型自动处理最大化/最小化
     %
-    % 优化目标:
-    %   1. 最大化ADN质量分数（转为最小化 -ADN_FRAC）
-    %   2. 最大化ADN质量流量（转为最小化 -ADN_FLOW）
+    % 优化目标（在 OptimizationProblem 中定义）:
+    %   1. ADN质量分数（添加为 maximize 或 minimize）
+    %   2. ADN质量流量（添加为 maximize 或 minimize）
     %
     % 设计变量:
     %   1. T0301_BF - 塔底采出比 [0.3, 0.9]
@@ -18,19 +18,26 @@ classdef ADNProductionEvaluator < handle
     %   3. T0301_BASIS_RR - 回流比 [1, 3]
     %
     % 使用示例:
+    %   % 创建问题
+    %   problem = OptimizationProblem('ADNProduction');
+    %   problem.addVariable(Variable('T0301_BF', 'continuous', [0.3, 0.9]));
+    %   problem.addVariable(Variable('T0301_FEED_STAGE', 'integer', [10, 20]));
+    %   problem.addVariable(Variable('T0301_BASIS_RR', 'continuous', [1, 3]));
+    %   problem.addObjective(Objective('ADN_FRAC', 'maximize'));
+    %   problem.addObjective(Objective('ADN_FLOW', 'maximize'));
+    %
+    %   % 创建评估器
     %   simulator = AspenPlusSimulator();
     %   simulator.connect(config);
-    %
     %   evaluator = ADNProductionEvaluator(simulator);
-    %   x = [0.6, 15, 2.0];  % [BF, FEED_STAGE, BASIS_RR]
-    %   objectives = evaluator.evaluate(x);
-
+    %   evaluator.setProblem(problem);
+    %
+    %   % 评估
+    %   result = evaluator.evaluate([0.6, 15, 2.0]);
 
     properties (Access = private)
         simulator;          % AspenPlusSimulator对象
         logger;             % Logger对象
-        evaluationCount;    % 评估计数
-        variableIndex;      % 变量名到向量索引映射（可选，用于避免顺序错配）
     end
 
     properties (Access = public)
@@ -49,8 +56,10 @@ classdef ADNProductionEvaluator < handle
             % 示例:
             %   evaluator = ADNProductionEvaluator(simulator);
 
+            % 调用父类构造函数
+            obj@Evaluator();
+
             obj.simulator = simulator;
-            obj.evaluationCount = 0;
 
             % 惩罚系数（收敛失败时返回大的正值，因为是最小化问题）
             obj.constraintPenalty = 1e8;
@@ -64,50 +73,32 @@ classdef ADNProductionEvaluator < handle
             else
                 obj.logger = [];
             end
-
-            obj.variableIndex = [];
         end
 
         function result = evaluate(obj, x)
             % evaluate 评估给定设计的目标函数值
+            % 根据 OptimizationProblem 中的 Objective 类型自动处理最大化/最小化
+            %
+            % 关键特性：
+            %   - 用户定义什么语义（maximize/minimize），系统就按语义执行
+            %   - 不强制用户必须写 maximize 或 minimize
+            %   - 内部统一转为最小化形式给算法
             %
             % 输入:
             %   x - 设计变量向量 [T0301_BF, T0301_FEED_STAGE, T0301_BASIS_RR]
-            %       T0301_BF - 塔底采出比 [0.3, 0.9]
-            %       T0301_FEED_STAGE - 进料板位置 [10, 20]（整数）
-            %       T0301_BASIS_RR - 回流比 [1, 3]
             %
             % 输出:
             %   result - 评估结果结构体
-            %       result.objectives - 目标函数值 [-ADN_FRAC, -ADN_FLOW]
-            %           -ADN_FRAC - 负的ADN质量分数（最大化转最小化）
-            %           -ADN_FLOW - 负的ADN质量流量（最大化转最小化）
-            %
-            % 示例:
-            %   result = evaluator.evaluate([0.6, 15, 2.0]);
 
-            obj.evaluationCount = obj.evaluationCount + 1;
+            obj.evaluationCounter = obj.evaluationCounter + 1;
 
-            % 提取设计变量（优先按变量名映射，避免变量顺序不一致导致错配）
-            idxBF = obj.getVarIndex('T0301_BF', 1);
-            idxStage = obj.getVarIndex('T0301_FEED_STAGE', 2);
-            idxRR = obj.getVarIndex('T0301_BASIS_RR', 3);
-
-            maxIdx = max([idxBF, idxStage, idxRR]);
-            if numel(x) < maxIdx
-                error('ADNProductionEvaluator:InputSizeMismatch', ...
-                    '输入变量向量长度不足: 需要至少 %d 个元素，实际 %d', maxIdx, numel(x));
-            end
-
-            T0301_BF = x(idxBF);
-            T0301_FEED_STAGE = round(x(idxStage));  % 进料板位置必须是整数
-            T0301_BASIS_RR = x(idxRR);
+            % 提取设计变量
+            T0301_BF = x(1);
+            T0301_FEED_STAGE = round(x(2));  % 进料板位置必须是整数
+            T0301_BASIS_RR = x(3);
 
             obj.logInfo(sprintf('评估 #%d: BF=%.4f, FEED_STAGE=%d, BASIS_RR=%.4f', ...
-                obj.evaluationCount, T0301_BF, T0301_FEED_STAGE, T0301_BASIS_RR));
-
-            % 初始化结果结构体
-            result = struct();
+                obj.evaluationCounter, T0301_BF, T0301_FEED_STAGE, T0301_BASIS_RR));
 
             try
                 % 步骤1: 运行Aspen Plus仿真
@@ -118,37 +109,61 @@ classdef ADNProductionEvaluator < handle
                 simResults = obj.runSimulation(vars);
 
                 if ~simResults.success
-                    obj.logWarning('仿真失败或收敛失败，返回惩罚值');
-                    result.objectives = [obj.constraintPenalty, obj.constraintPenalty];
+                    obj.logWarning('仿真失败或收敛失败，返回错误结果');
+                    result = obj.createErrorResult('仿真失败');
                     return;
                 end
 
-                % 步骤2: 提取目标值
+                % 步骤2: 提取原始结果值（物理意义上的真实值）
                 ADN_FRAC = simResults.ADN_FRAC;  % ADN质量分数
                 ADN_FLOW = simResults.ADN_FLOW;  % ADN质量流量
 
-                % 步骤3: 转换为最小化问题（取负值）
-                result.objectives = [-ADN_FRAC, -ADN_FLOW];
+                % 步骤3: 根据用户定义的目标类型进行处理
+                % 关键原则：用户写什么语义，系统就按什么语义执行
+                %   - 如果用户定义 maximize，说明想要更大的值 -> 取负（最小化-value）
+                %   - 如果用户定义 minimize，说明想要更小的值 -> 直接用（最小化value）
+                %   - 如果用户没定义type，默认 minimize
+                objectives = [];
+                nObjs = obj.problem.getNumberOfObjectives();
 
-                obj.logInfo(sprintf('  结果: ADN质量分数=%.6f, ADN质量流量=%.6f kg/hr', ...
+                for i = 1:nObjs
+                    objective = obj.problem.getObjective(i);
+
+                    % 根据目标名称获取对应的计算值
+                    if strcmp(objective.name, 'ADN_FRAC')
+                        value = ADN_FRAC;
+                    elseif strcmp(objective.name, 'ADN_FLOW')
+                        value = ADN_FLOW;
+                    else
+                        obj.logWarning(sprintf('未知的目标: %s，使用默认值0', objective.name));
+                        value = 0;
+                    end
+
+                    % 根据目标语义转换
+                    % 如果用户定义为 maximize（想要最大值），则取负转为最小化
+                    % 如果用户定义为 minimize（想要最小值），则直接用
+                    if objective.isMaximize()
+                        value = -value;  % 转为最小化：最大化value = 最小化-value
+                        obj.logInfo(sprintf('  目标 %s: 用户定义为 maximize，内部转为 minimize(-value)', objective.name));
+                    else
+                        obj.logInfo(sprintf('  目标 %s: 用户定义为 minimize，直接使用', objective.name));
+                    end
+
+                    objectives = [objectives, value];
+                end
+
+                % 步骤4: 构造成功结果
+                constraints = [];  % 此评估器不返回约束
+                result = obj.createSuccessResult(objectives, constraints);
+
+                obj.logInfo(sprintf('  原始结果: ADN_FRAC=%.6f, ADN_FLOW=%.6f kg/hr', ...
                     ADN_FRAC, ADN_FLOW));
-                obj.logInfo(sprintf('  目标值: obj1=%.6f, obj2=%.6f', ...
-                    result.objectives(1), result.objectives(2)));
+                obj.logInfo(sprintf('  处理后目标值: [%.6f, %.6f]', objectives(1), objectives(2)));
 
             catch ME
                 obj.logError(sprintf('评估异常: %s', ME.message));
-                result.objectives = [obj.constraintPenalty, obj.constraintPenalty];
+                result = obj.createErrorResult(ME.message);
             end
-        end
-
-        function count = getEvaluationCount(obj)
-            % getEvaluationCount 获取评估次数
-            count = obj.evaluationCount;
-        end
-
-        function resetCount(obj)
-            % resetCount 重置评估计数
-            obj.evaluationCount = 0;
         end
     end
 
@@ -156,14 +171,11 @@ classdef ADNProductionEvaluator < handle
         function simResults = runSimulation(obj, vars)
             % runSimulation 运行Aspen Plus仿真
             %
-            % 输入（推荐结构体形式，避免变量顺序错配）:
+            % 输入:
             %   vars - struct，字段为变量名
             %
             % 输出:
             %   simResults - 仿真结果结构体
-            %       success - 仿真是否成功
-            %       ADN_FRAC - ADN质量分数
-            %       ADN_FLOW - ADN质量流量 (kg/hr)
 
             simResults = struct();
             simResults.success = false;
@@ -180,30 +192,16 @@ classdef ADNProductionEvaluator < handle
                     return;
                 end
 
-                % 获取结果
-                % ADN质量分数：\Data\Streams\0320\Output\MASSFRAC\MIXED\ADN
-                simResults.ADN_FRAC = obj.simulator.getVariable('ADN_FRAC');
+                % 获取结果（通过结果名称，会自动使用 resultMapping）
+                results = obj.simulator.getResults({'ADN_FRAC', 'ADN_FLOW'});
 
-                % ADN质量流量：\Data\Streams\ADN\Output\MASSFLOW\MIXED\ADN
-                simResults.ADN_FLOW = obj.simulator.getVariable('ADN_FLOW');
-
+                simResults.ADN_FRAC = results.ADN_FRAC;
+                simResults.ADN_FLOW = results.ADN_FLOW;
                 simResults.success = true;
 
             catch ME
                 obj.logError(sprintf('仿真执行异常: %s', ME.message));
                 simResults.success = false;
-            end
-        end
-
-        function idx = getVarIndex(obj, varName, defaultIdx)
-            idx = defaultIdx;
-            try
-                if ~isempty(obj.variableIndex) && isa(obj.variableIndex, 'containers.Map')
-                    if obj.variableIndex.isKey(varName)
-                        idx = obj.variableIndex(varName);
-                    end
-                end
-            catch
             end
         end
 
@@ -229,31 +227,6 @@ classdef ADNProductionEvaluator < handle
                 obj.logger.error(message);
             else
                 fprintf('[ERROR] %s\n', message);
-            end
-        end
-    end
-
-    methods (Access = public)
-        function setProblem(obj, problem)
-            % setProblem 可选：根据问题变量顺序建立索引映射
-            try
-                varSet = problem.getVariableSet();
-                iterator = varSet.getIterator(); % cell array of Variable
-
-                m = containers.Map('KeyType', 'char', 'ValueType', 'double');
-                for i = 1:length(iterator)
-                    try
-                        name = iterator{i}.name;
-                        if ischar(name) && ~isempty(name)
-                            m(name) = i;
-                        end
-                    catch
-                    end
-                end
-
-                obj.variableIndex = m;
-            catch
-                obj.variableIndex = [];
             end
         end
     end

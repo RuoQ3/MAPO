@@ -20,6 +20,7 @@ classdef ExpressionEvaluator < Evaluator
         derivedDefs;
         objectiveDefs;
         constraintDefs;
+        logger;            % Logger对象
     end
 
     methods
@@ -47,6 +48,13 @@ classdef ExpressionEvaluator < Evaluator
             obj.objectiveDefs = struct([]);
             obj.constraintDefs = struct([]);
 
+            % 创建Logger
+            if exist('Logger', 'class')
+                obj.logger = Logger.getLogger('ExpressionEvaluator');
+            else
+                obj.logger = [];
+            end
+
             obj.applyConfigDefaults();
         end
 
@@ -67,6 +75,7 @@ classdef ExpressionEvaluator < Evaluator
                     obj.simulator.setVariables(x);
                     success = obj.simulator.run(obj.timeout);
                     if ~success
+                        obj.logMsg('warning', '仿真未收敛，返回惩罚值');
                         result = obj.createPenaltyResult('Simulation failed or did not converge');
                         return;
                     end
@@ -85,6 +94,7 @@ classdef ExpressionEvaluator < Evaluator
 
                 result = obj.createSuccessResult(objectives, constraints, '');
             catch ME
+                obj.logMsg('error', sprintf('评估失败: %s', ME.message));
                 result = obj.createPenaltyResult(ME.message);
             end
         end
@@ -585,6 +595,32 @@ classdef ExpressionEvaluator < Evaluator
                 return;
             end
             error('ExpressionEvaluator:UnknownSymbol', 'Unknown symbol: %s', name);
+        end
+    end
+
+    methods (Access = private)
+        function logMsg(obj, level, message)
+            % logMsg 统一日志输出
+            % 优先使用Logger，回退到fprintf
+            %
+            % 输入:
+            %   level - 日志级别字符串 ('debug'/'info'/'warning'/'error')
+            %   message - 日志消息
+
+            if ~isempty(obj.logger)
+                switch lower(level)
+                    case 'debug'
+                        obj.logger.debug(message);
+                    case 'info'
+                        obj.logger.info(message);
+                    case 'warning'
+                        obj.logger.warning(message);
+                    case 'error'
+                        obj.logger.error(message);
+                end
+            else
+                fprintf('[%s] ExpressionEvaluator: %s\n', upper(level), message);
+            end
         end
     end
 end

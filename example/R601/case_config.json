@@ -107,18 +107,133 @@
     }
   },
   "_comments": {
-    "note": "这是ORC余热回收系统的配置文件",
-    "usage": "运行: run_case('case_config.json')",
-    "model_file": "确保r601a.bkp文件在同一目录下",
-    "evaluator": "使用专门的ORCEvaluator评估器",
-    "objectives": [
-      "PROFIT: 最大化系统年利润",
-      "EFF: 最大化热力学效率"
+    "note": "有机朗肯循环(ORC)余热回收系统多目标优化配置",
+    "description": "本配置文件展示了如何优化ORC系统，同时最大化年利润和热力学效率",
+    "usage": [
+      "1. 确保Aspen Plus模型文件'r601a.bkp'在同一目录下",
+      "2. 根据您的实际Aspen模型修改nodeMapping中的路径",
+      "3. 运行: results = run_case('case_config.json')"
     ],
-    "variables": [
-      "FLOW_S7/S8: 工质流量控制",
-      "P_EVAP: 蒸发压力（泵出口）",
-      "P_COND: 冷凝压力（透平出口）"
+    "model_file": {
+      "path": "r601a.bkp",
+      "description": "Aspen Plus模型文件，包含ORC系统流程图",
+      "working_fluid": "R601a工质（有机工作流体）"
+    },
+    "evaluator_info": {
+      "type": "ORCEvaluator",
+      "description": "专门为ORC系统设计的评估器，计算能量平衡和经济指标",
+      "note": "ORCEvaluator会自动从仿真结果计算PROFIT和EFF目标"
+    },
+    "objectives_info": [
+      {
+        "name": "PROFIT",
+        "description": "最大化年系统利润（电力收益-冷却成本-操作成本）",
+        "unit": "$/year",
+        "type": "maximize - 框架自动处理符号转换",
+        "calculation": "electricityPrice * W_net * operatingHours - coolingWaterCost * Q_CON - maintenanceCost"
+      },
+      {
+        "name": "EFF",
+        "description": "最大化热力学效率（净功率/热输入）",
+        "unit": "%",
+        "type": "maximize - 框架自动处理符号转换",
+        "calculation": "(W_TUR - W_PUM) / Q_IN * 100"
+      }
+    ],
+    "variables_info": [
+      {
+        "name": "FLOW_S7",
+        "description": "S7流进EV1（蒸发器1）的工质流量，影响功率输出",
+        "range": "[40-60] kmol/hr",
+        "type": "continuous",
+        "note": "增加流量会增加功率，但可能降低效率"
+      },
+      {
+        "name": "FLOW_S8",
+        "description": "S8流进EV2（蒸发器2）的工质流量，影响热利用",
+        "range": "[40-60] kmol/hr",
+        "type": "continuous",
+        "note": "两个流量可以不同，实现多工流ORC"
+      },
+      {
+        "name": "P_EVAP",
+        "description": "蒸发压力（泵出口），影响效率和稳定性",
+        "range": "[2.0-5.0] bar",
+        "type": "continuous",
+        "note": "更高压力通常增加功率但需要更好的安全性"
+      },
+      {
+        "name": "P_COND",
+        "description": "冷凝压力（透平出口），影响热排斥",
+        "range": "[0.5-1.5] bar",
+        "type": "continuous",
+        "note": "更低压力增加功率输出但提高了冷却需求"
+      }
+    ],
+    "mapping_notes": {
+      "description": "nodeMapping中的路径必须与您的Aspen ORC模型结构一致",
+      "variables_mapping": {
+        "FLOW_S7": "蒸发器EV1的进口流量设定值",
+        "FLOW_S8": "蒸发器EV2的进口流量设定值",
+        "P_EVAP": "透平(TUR)或泵(PUM)的蒸发侧压力设定值",
+        "P_COND": "透平的冷凝侧压力设定值"
+      },
+      "results_mapping": {
+        "W_TUR": "透平输出功率（正值）",
+        "W_PUM": "泵消耗功率（正值）",
+        "Q_CON": "冷凝器热排斥（正值，冷却消耗）",
+        "H_1": "EV1热源进口焓",
+        "H_2": "EV1热源出口焓",
+        "H_3": "工质进口焓",
+        "H_4": "工质出口焓"
+      }
+    },
+    "economic_parameters_info": {
+      "electricityPrice": "0.1 $/kWh - 当地电力售价",
+      "operatingHours": "8000 hr/year - 年运行小时数",
+      "coolingWaterCost": "0.354 $/ton - 冷却水单位成本"
+    },
+    "optimization_parameters_info": {
+      "populationSize": "20 - 初始种群（较小因为评估时间较长）",
+      "maxGenerations": "10 - 最大代数（可增加到20-30获得更好解）",
+      "crossoverRate": "0.9 - 交叉概率",
+      "mutationRate": "1.0 - 变异概率",
+      "crossoverDistIndex": "20 - 交叉分布指数",
+      "mutationDistIndex": "20 - 变异分布指数"
+    },
+    "expected_output": {
+      "result_files": [
+        "pareto_solutions.csv - Pareto前沿解（PROFIT vs EFF）",
+        "pareto_front.png - 2D Pareto前沿曲线图",
+        "all_solutions.csv - 所有评估的候选解",
+        "optimization_report.txt - 详细的优化过程报告"
+      ],
+      "pareto_interpretation": "Pareto前沿代表利润和效率的权衡。选择哪个点作为最终设计取决于您的优先级"
+    },
+    "tuning_tips": [
+      "1. 如果收敛慢，增加maxGenerations到30",
+      "2. 如果需要更多样的解，增加populationSize到30-50",
+      "3. 调整变量范围以反映您的实际物理约束（安全工作压力、流量限制等）",
+      "4. 验证economicParameters是否与您的实际运营成本一致",
+      "5. 考虑添加约束条件以排除不可行解（如最小压差、最大压力等）"
+    ],
+    "common_issues": [
+      {
+        "issue": "所有解的PROFIT都是负数",
+        "solution": "检查electricityPrice是否太低，或coolingWaterCost是否太高。根据实际调整"
+      },
+      {
+        "issue": "目标值变化不大（似乎停滞）",
+        "solution": "增加maxGenerations和populationSize，或检查变量范围是否太窄"
+      },
+      {
+        "issue": "Aspen模型评估报错或超时",
+        "solution": "检查nodeMapping路径，确保它们存在于模型中。增加evaluator.timeout"
+      },
+      {
+        "issue": "EFF（效率）总是很低（<10%）",
+        "solution": "检查ORCEvaluator中Q_IN的计算，或Aspen模型中热输入流的定义"
+      }
     ]
   }
 }

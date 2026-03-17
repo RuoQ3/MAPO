@@ -55,7 +55,8 @@ classdef EvaluatorFactory
             end
 
             % 记录日志
-            fprintf('  创建评估器: %s\n', evaluatorType);
+            logger = EvaluatorFactory.getFactoryLogger();
+            logger.info(sprintf('创建评估器: %s', evaluatorType));
 
             try
                 % 尝试创建评估器实例
@@ -163,7 +164,7 @@ classdef EvaluatorFactory
                     end
                 end
 
-                fprintf('    评估器创建成功\n');
+                logger.info(sprintf('评估器创建成功: %s', evaluatorType));
 
             catch ME
                 % 重新抛出错误，保留调用栈
@@ -286,28 +287,44 @@ classdef EvaluatorFactory
             %   EvaluatorFactory.printAvailableTypes();
 
             types = EvaluatorFactory.getAvailableTypes();
+            logger = EvaluatorFactory.getFactoryLogger();
 
-            fprintf('\n========================================\n');
-            fprintf('可用的评估器类型:\n');
-            fprintf('========================================\n\n');
+            logger.info('========================================');
+            logger.info('可用的评估器类型:');
+            logger.info('========================================');
 
             for i = 1:length(types)
                 info = EvaluatorFactory.getEvaluatorInfo(types{i});
-                fprintf('%d. %s\n', i, types{i});
-                fprintf('   描述: %s\n', info.description);
+                logger.info(sprintf('%d. %s', i, types{i}));
+                logger.info(sprintf('   描述: %s', info.description));
 
                 if ~isempty(info.objectives)
-                    fprintf('   目标: %s\n', strjoin(info.objectives, ', '));
+                    logger.info(sprintf('   目标: %s', strjoin(info.objectives, ', ')));
                 end
 
                 if ~isempty(info.optionalParams)
-                    fprintf('   可选参数: %s\n', strjoin(info.optionalParams, ', '));
+                    logger.info(sprintf('   可选参数: %s', strjoin(info.optionalParams, ', ')));
                 end
-
-                fprintf('\n');
             end
 
-            fprintf('========================================\n\n');
+            logger.info('========================================');
+        end
+
+        function logger = getFactoryLogger()
+            % getFactoryLogger 获取工厂Logger实例
+            %
+            % 输出:
+            %   logger - Logger实例
+
+            persistent factoryLogger;
+            if isempty(factoryLogger)
+                if exist('Logger', 'class')
+                    factoryLogger = Logger.getLogger('EvaluatorFactory');
+                else
+                    factoryLogger = [];
+                end
+            end
+            logger = factoryLogger;
         end
     end
 end

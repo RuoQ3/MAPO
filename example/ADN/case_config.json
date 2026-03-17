@@ -47,7 +47,6 @@
         "weight": 1.0
       }
     ],
-    "constraints": [],
     "evaluator": {
       "type": "ADNProductionEvaluator",
       "timeout": 300,
@@ -86,24 +85,5 @@
       "crossoverDistIndex": 20,
       "mutationDistIndex": 20
     }
-  },
-  "_comments": {
-    "note": "ADN生产工艺（二级氢氰化工段）优化配置",
-    "usage": "运行: run_case('case_config.json')",
-    "model_file": "确保二级氢氰化工段.bkp文件在同一目录下",
-    "evaluator": "使用专门的ADNProductionEvaluator评估器",
-    "objectives": [
-      "ADN_FRAC: 最大化ADN质量分数（纯度）",
-      "ADN_FLOW: 最大化ADN质量流量（产量）"
-    ],
-    "variables": [
-      "T0301_BF: 塔底采出比控制",
-      "T0301_FEED_STAGE: 进料板位置优化",
-      "T0301_BASIS_RR: 回流比优化"
-    ],
-    "notes": [
-      "T0301_FEED_STAGE是整数变量（塔板位置）",
-      "其他变量为连续变量"
-    ]
   }
 }

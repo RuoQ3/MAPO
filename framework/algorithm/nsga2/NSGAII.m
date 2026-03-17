@@ -36,7 +36,9 @@ classdef NSGAII < AlgorithmBase
         lowerBounds;         % 变量下界
         upperBounds;         % 变量上界
         currentGeneration;   % 当前代数
-        allEvaluatedIndividuals;  % 所有评估过的Individual（用于完整历史记录）
+        recordFullHistory;   % 是否记录完整历史（Individual对象，消耗内存）
+        objectiveHistory;    % 目标值历史（轻量级记录）
+        allEvaluatedIndividuals;  % 所有评估过的Individual（仅当 recordFullHistory=true 时使用）
         parallelConfig;      % 并行计算配置 (ParallelConfig对象)
         enableParallel;      % 是否启用并行评估
     end
@@ -61,6 +63,8 @@ classdef NSGAII < AlgorithmBase
             obj.currentGeneration = 0;
             obj.enableParallel = false;   % 默认不启用并行
             obj.parallelConfig = [];      % 并行配置（延迟初始化）
+            obj.recordFullHistory = false; % 默认不记录完整历史（节省内存）
+            obj.objectiveHistory = [];     % 目标值历史（轻量级记录）
         end
 
         function results = optimize(obj, problem, config)
@@ -83,15 +87,28 @@ classdef NSGAII < AlgorithmBase
             obj.getBounds();
 
             % 初始化历史记录数组
-            obj.allEvaluatedIndividuals = Individual.empty(0, 0);
+            if obj.recordFullHistory
+                obj.allEvaluatedIndividuals = Individual.empty(0, 0);
+            else
+                % 轻量级记录：仅存储目标值矩阵
+                obj.objectiveHistory = [];
+            end
 
             % 初始化种群
             obj.initializePopulation();
 
             % 记录初始种群（所有评估过的解）
             initialInds = obj.population.getAll();
-            for i = 1:length(initialInds)
-                obj.allEvaluatedIndividuals(end+1) = initialInds(i).clone();
+            if obj.recordFullHistory
+                for i = 1:length(initialInds)
+                    obj.allEvaluatedIndividuals(end+1) = initialInds(i).clone();
+                end
+            else
+                % 轻量级记录：存储目标值
+                for i = 1:length(initialInds)
+                    objectives = initialInds(i).getObjectives();
+                    obj.objectiveHistory = [obj.objectiveHistory; objectives];
+                end
             end
 
             % 主循环
@@ -112,8 +129,16 @@ classdef NSGAII < AlgorithmBase
 
                 % 记录子代（所有评估过的解）
                 offspringInds = offspring.getAll();
-                for i = 1:length(offspringInds)
-                    obj.allEvaluatedIndividuals(end+1) = offspringInds(i).clone();
+                if obj.recordFullHistory
+                    for i = 1:length(offspringInds)
+                        obj.allEvaluatedIndividuals(end+1) = offspringInds(i).clone();
+                    end
+                else
+                    % 轻量级记录：存储目标值
+                    for i = 1:length(offspringInds)
+                        objectives = offspringInds(i).getObjectives();
+                        obj.objectiveHistory = [obj.objectiveHistory; objectives];
+                    end
                 end
 
                 % 合并父代和子代
@@ -127,6 +152,9 @@ classdef NSGAII < AlgorithmBase
 
                 % 环境选择：选择最好的N个个体
                 obj.population = obj.environmentalSelection(combinedPop);
+
+                % 更新最优个体
+                obj.updateBestFromPopulation(obj.population);
 
                 % 记录历史
                 iterData = obj.getIterationData(obj.currentGeneration);
@@ -177,17 +205,22 @@ classdef NSGAII < AlgorithmBase
             %   results - 结果结构体
             %
             % 说明:
-            %   重写父类方法，添加所有评估过的Individual记录
+            %   重写父类方法，添加所有评估过的Individual或目标值历史记录
 
             % 调用父类方法获取基本结果
             results = finalizeResults@AlgorithmBase(obj);
 
-            % 添加所有评估过的Individual
-            results.allEvaluatedIndividuals = obj.allEvaluatedIndividuals;
-            results.totalEvaluatedSolutions = length(obj.allEvaluatedIndividuals);
-
-            % 日志输出
-            obj.logMessage('INFO', '总评估解数（包括历史）: %d', results.totalEvaluatedSolutions);
+            % 添加历史记录（根据 recordFullHistory 模式）
+            if obj.recordFullHistory
+                results.allEvaluatedIndividuals = obj.allEvaluatedIndividuals;
+                results.totalEvaluatedSolutions = length(obj.allEvaluatedIndividuals);
+                obj.logMessage('INFO', '总评估解数（完整历史）: %d', results.totalEvaluatedSolutions);
+            else
+                % 轻量级模式：仅返回目标值历史
+                results.objectiveHistory = obj.objectiveHistory;
+                results.totalEvaluatedSolutions = size(obj.objectiveHistory, 1);
+                obj.logMessage('INFO', '总评估解数（目标值历史）: %d', results.totalEvaluatedSolutions);
+            end
         end
     end
 
@@ -217,6 +250,11 @@ classdef NSGAII < AlgorithmBase
                 end
                 if isfield(config, 'mutationDistIndex')
                     obj.mutationDistIndex = config.mutationDistIndex;
+                end
+
+                % 加载历史记录配置
+                if isfield(config, 'recordFullHistory')
+                    obj.recordFullHistory = config.recordFullHistory;
                 end
 
                 % 加载并行配置
@@ -336,6 +374,9 @@ classdef NSGAII < AlgorithmBase
                 childVars = GeneticOperators.polynomialMutation(childVars, ...
                     obj.lowerBounds, obj.upperBounds, obj.mutationRate, obj.mutationDistIndex);
 
+                % 修复变量（确保非连续变量符合约束）
+                childVars = obj.repairVariables(childVars);
+
                 % 创建子代个体
                 child = Individual(childVars);
                 offspring.add(child);
@@ -358,7 +399,10 @@ classdef NSGAII < AlgorithmBase
             individuals = combinedPop.getAll();
 
             % 按rank排序，rank相同则按crowdingDistance降序
-            [~, sortIdx] = sort(arrayfun(@(ind) ind.rank * 1e6 - ind.crowdingDistance, individuals));
+            ranks = arrayfun(@(ind) ind.rank, individuals);
+            distances = arrayfun(@(ind) ind.crowdingDistance, individuals);
+            % 使用sortrows进行正确的双键排序: 先按rank升序，再按crowdingDistance降序
+            [~, sortIdx] = sortrows([ranks(:), -distances(:)], [1, 2]);
 
             % 选择前N个个体
             for i = 1:min(obj.populationSize, length(sortIdx))
@@ -417,126 +461,6 @@ classdef NSGAII < AlgorithmBase
                 obj.history = historyEntry;
             else
                 obj.history(end+1) = historyEntry;
-            end
-        end
-
-        function data = getIterationData(obj, iteration)
-            % getIterationData 获取用于GUI/日志的迭代数据
-            %
-            % 输出字段（尽量与 OptimizationCallbacks 兼容）:
-            %   - iteration
-            %   - evaluations
-            %   - bestObjectives
-            %   - paretoFront      (数值矩阵: nSolutions x nObj)
-            %   - archiveSize      (Pareto 解数量)
-            %   - feasibleRatio    (可行解比例，可选)
-
-            data = struct();
-            data.iteration = iteration;
-            data.evaluations = obj.evaluationCount;
-            data.bestObjectives = [];
-            data.paretoFront = [];
-            data.populationObjectives = [];
-            data.archiveSize = 0;
-
-            if isempty(obj.population)
-                return;
-            end
-
-            inds = obj.population.getAll();
-            if isempty(inds)
-                return;
-            end
-
-            % 尝试使用已计算的 rank 提取第一前沿，避免重复 fastNonDominatedSort
-            frontInds = Individual.empty(0, 0);
-            try
-                for i = 1:length(inds)
-                    if inds(i).getRank() == 1
-                        frontInds(end+1) = inds(i); %#ok<AGROW>
-                    end
-                end
-            catch
-                frontInds = Individual.empty(0, 0);
-            end
-
-            if isempty(frontInds)
-                frontInds = inds;
-            end
-
-            % 提取目标值矩阵
-            nSolutions = length(frontInds);
-            if nSolutions == 0
-                return;
-            end
-
-            try
-                nObj = length(frontInds(1).getObjectives());
-            catch
-                nObj = 0;
-            end
-            if nObj <= 0
-                return;
-            end
-
-            % 全体个体目标值（用于绘制非 Pareto 解）
-            allObjValues = nan(length(inds), nObj);
-            for i = 1:length(inds)
-                try
-                    allObjValues(i, :) = inds(i).getObjectives();
-                catch
-                end
-            end
-
-            validAll = ~all(isnan(allObjValues), 2);
-            allObjValues = allObjValues(validAll, :);
-            data.populationObjectives = allObjValues;
-
-            objValues = nan(nSolutions, nObj);
-            for i = 1:nSolutions
-                try
-                    objValues(i, :) = frontInds(i).getObjectives();
-                catch
-                end
-            end
-
-            % 删除全 NaN 行（防御）
-            validRow = ~all(isnan(objValues), 2);
-            objValues = objValues(validRow, :);
-
-            data.paretoFront = objValues;
-            data.archiveSize = size(objValues, 1);
-
-            % 用每个目标的当前最小值作为“bestObjectives”，用于收敛曲线（忽略 NaN/Inf）
-            best = nan(1, nObj);
-            if ~isempty(allObjValues)
-                for j = 1:nObj
-                    col = allObjValues(:, j);
-                    col = col(isfinite(col));
-                    if ~isempty(col)
-                        best(j) = min(col);
-                    end
-                end
-            end
-            if ~all(isnan(best))
-                data.bestObjectives = best;
-            end
-
-            % 可行解比例（如果有约束）
-            try
-                if obj.problem.getNumberOfConstraints() > 0
-                    feasibleCount = 0;
-                    for i = 1:length(inds)
-                        try
-                            if inds(i).isFeasible()
-                                feasibleCount = feasibleCount + 1;
-                            end
-                        catch
-                        end
-                    end
-                    data.feasibleRatio = feasibleCount / max(1, length(inds));
-                end
-            catch
             end
         end
     end

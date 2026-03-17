@@ -317,6 +317,9 @@ classdef PSO < AlgorithmBase
                     end
                 end
 
+                % 修复变量（确保非连续变量符合约束）
+                newX = obj.repairVariables(newX);
+
                 % 设置新位置
                 individuals(i).setVariables(newX);
             end

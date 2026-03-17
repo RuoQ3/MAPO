@@ -1,0 +1,199 @@
+{
+  "problem": {
+    "name": "BraytonCycle_Optimization",
+    "description": "布雷顿循环多目标优化 - 最大化热效率和净输出功率",
+    "variables": [
+      {
+        "name": "P_HP_in",
+        "type": "continuous",
+        "lowerBound": 17,
+        "upperBound": 35,
+        "values": [],
+        "unit": "MPa",
+        "description": "高压透平入口压力",
+        "initialValue": 26
+      },
+      {
+        "name": "T_LP_in",
+        "type": "continuous",
+        "lowerBound": 500,
+        "upperBound": 600,
+        "values": [],
+        "unit": "C",
+        "description": "低压透平入口温度",
+        "initialValue": 550
+      },
+      {
+        "name": "split_ratio",
+        "type": "continuous",
+        "lowerBound": 0.2,
+        "upperBound": 0.5,
+        "values": [],
+        "unit": "-",
+        "description": "分流比",
+        "initialValue": 0.35
+      },
+      {
+        "name": "P_LP_in",
+        "type": "continuous",
+        "lowerBound": 8,
+        "upperBound": 16,
+        "values": [],
+        "unit": "MPa",
+        "description": "低压透平入口压力",
+        "initialValue": 12
+      },
+      {
+        "name": "P_inter",
+        "type": "continuous",
+        "lowerBound": 8,
+        "upperBound": 16,
+        "values": [],
+        "unit": "MPa",
+        "description": "中间压力",
+        "initialValue": 12
+      },
+      {
+        "name": "T_comp_in",
+        "type": "continuous",
+        "lowerBound": 32,
+        "upperBound": 46,
+        "values": [],
+        "unit": "C",
+        "description": "压缩机入口温度",
+        "initialValue": 39
+      }
+    ],
+    "objectives": [
+      {
+        "name": "thermal_efficiency",
+        "type": "maximize",
+        "expression": "result.W_net / result.Q_in * 100",
+        "unit": "%",
+        "weight": 1,
+        "description": "热效率"
+      },
+      {
+        "name": "net_power",
+        "type": "maximize",
+        "expression": "result.W_net",
+        "unit": "kW",
+        "weight": 1,
+        "description": "净输出功率"
+      }
+    ],
+    "constraints": [
+      {
+        "name": "min_efficiency",
+        "type": "inequality",
+        "expression": "result.W_net / result.Q_in >= 0.30",
+        "unit": "-",
+        "description": "最小热效率30%"
+      },
+      {
+        "name": "min_power",
+        "type": "inequality",
+        "expression": "result.W_net >= 1000",
+        "unit": "kW",
+        "description": "最小净输出功率1000kW"
+      },
+      {
+        "name": "pressure_consistency",
+        "type": "inequality",
+        "expression": "x.P_HP_in >= x.P_LP_in",
+        "unit": "MPa",
+        "description": "高压透平入口压力应大于低压透平入口压力"
+      },
+      {
+        "name": "inter_pressure_range",
+        "type": "inequality",
+        "expression": "x.P_inter >= x.P_LP_in && x.P_inter <= x.P_HP_in",
+        "unit": "MPa",
+        "description": "中间压力应在低压和高压之间"
+      }
+    ],
+    "derived": [
+      {
+        "name": "power_ratio",
+        "expression": "result.W_turbine / result.W_compressor",
+        "unit": "-",
+        "description": "功率比(透平功率/压缩机功率)"
+      },
+      {
+        "name": "specific_work",
+        "expression": "result.W_net / result.mass_flow",
+        "unit": "kJ/kg",
+        "description": "比功"
+      }
+    ],
+    "evaluator": {
+      "type": "BraytonCycleEvaluator",
+      "timeout": 300,
+      "economicParameters": {
+        "interestRate": 0.12,
+        "systemLifetime": 20,
+        "maintenanceFactor": 0.06,
+        "operatingHours": 7200,
+        "electricityPrice": 0.1
+      }
+    }
+  },
+  "simulator": {
+    "type": "Aspen",
+    "settings": {
+      "modelPath": "E:\\Project\\Chemical Design Competition\\MAPO\\example\\布雷顿循环\\中间冷却再热布雷顿循环.bkp",
+      "timeout": 300,
+      "visible": false,
+      "autoSave": false,
+      "suppressWarnings": true,
+      "maxRetries": 3,
+      "retryDelay": 2
+    },
+    "nodeMapping": {
+      "variables": {
+        "P_HP_in": "\\Data\\Streams\\7\\Input\\PRES\\MIXED",
+        "T_LP_in": "\\Data\\Streams\\7\\Input\\TEMP\\MIXED",
+        "split_ratio": "\\Data\\Blocks\\F\\Input\\FRAC\\10-2",
+        "P_LP_in": "\\Data\\Blocks\\T\\Input\\PRES",
+        "P_inter": "\\Data\\Blocks\\MC1\\Input\\PRES",
+        "T_comp_in": "\\Data\\Blocks\\PRE\\Input\\VALUE"
+      },
+      "results": {
+        "W_net": "\\Data\\Streams\\POWER_NET\\Output\\WORK",
+        "Q_in": "\\Data\\Streams\\HEAT_IN\\Output\\HEAT",
+        "W_turbine": "\\Data\\Blocks\\HP_TURB\\Output\\WORK",
+        "W_compressor": "\\Data\\Blocks\\COMPRESSOR\\Output\\WORK",
+        "mass_flow": "\\Data\\Streams\\MAIN_FLOW\\Output\\MASSFLOW",
+        "T_HP_out": "\\Data\\Streams\\HP_OUT\\Output\\TEMP",
+        "T_LP_out": "\\Data\\Streams\\LP_OUT\\Output\\TEMP",
+        "P_HP_out": "\\Data\\Streams\\HP_OUT\\Output\\PRES",
+        "P_LP_out": "\\Data\\Streams\\LP_OUT\\Output\\PRES"
+      },
+      "resultUnits": {
+        "W_net": "kW",
+        "Q_in": "kW",
+        "W_turbine": "kW",
+        "W_compressor": "kW",
+        "mass_flow": "kg/s",
+        "T_HP_out": "C",
+        "T_LP_out": "C",
+        "P_HP_out": "MPa",
+        "P_LP_out": "MPa"
+      }
+    }
+  },
+  "algorithm": {
+    "type": "NSGA-II",
+    "parameters": {
+      "populationSize": 10,
+      "maxGenerations": 5,
+      "crossoverRate": 0.9,
+      "mutationRate": 1,
+      "crossoverDistIndex": 20,
+      "mutationDistIndex": 20
+    }
+  },
+  "runtime": {
+    "baseDir": "E:\\Project\\Chemical Design Competition\\MAPO\\example\\布雷顿循环"
+  }
+}

@@ -1,0 +1,33 @@
+========================================
+MAPO Optimization Results Report
+========================================
+
+Project Information:
+  Name: BraytonCycle_Optimization
+  Description: 布雷顿循环多目标优化 - 最大化热效率和净输出功率
+  Generated: 15-Jan-2026 22:10:39
+
+Optimization Configuration:
+  Algorithm: NSGA-II
+  Population Size: 10
+  Max Generations: 5
+  Number of Variables: 6
+  Number of Objectives: 2
+
+Execution Statistics:
+  Total Time: 357.92 seconds (5.97 minutes)
+  Evaluations: 60
+  Iterations: 5
+  Pareto Solutions: 1
+
+Variable Ranges:
+  P_HP_in: [17.0000, 35.0000] MPa
+  T_LP_in: [500.0000, 600.0000] C
+  split_ratio: [0.2000, 0.5000] -
+  P_LP_in: [8.0000, 16.0000] MPa
+  P_inter: [8.0000, 16.0000] MPa
+  T_comp_in: [32.0000, 46.0000] C
+
+Optimization Objectives:
+  thermal_efficiency (maximize) - 热效率
+  net_power (maximize) - 净输出功率

@@ -417,7 +417,10 @@ classdef ANNNSGAII < AlgorithmBase
             selectedPop = Population();
             individuals = combinedPop.getAll();
 
-            [~, sortIdx] = sort(arrayfun(@(ind) ind.rank * 1e6 - ind.crowdingDistance, individuals));
+            % 使用sortrows进行正确的双键排序: 先按rank升序，再按crowdingDistance降序
+            ranks = arrayfun(@(ind) ind.rank, individuals);
+            distances = arrayfun(@(ind) ind.crowdingDistance, individuals);
+            [~, sortIdx] = sortrows([ranks(:), -distances(:)], [1, 2]);
             for i = 1:min(obj.populationSize, length(sortIdx))
                 selectedPop.add(individuals(sortIdx(i)).clone());
             end
@@ -748,90 +751,6 @@ classdef ANNNSGAII < AlgorithmBase
 
             obj.logMessage('INFO', 'Gen: %d/%d, Evals: %d, Pareto: %d', ...
                 obj.currentGeneration, obj.maxGenerations, obj.evaluationCount, paretoSize);
-        end
-
-        function data = getIterationData(obj, iteration)
-            data = struct();
-            data.iteration = iteration;
-            data.evaluations = obj.evaluationCount;
-            data.bestObjectives = [];
-            data.paretoFront = [];
-            data.populationObjectives = [];
-            data.archiveSize = 0;
-
-            if isempty(obj.population)
-                return;
-            end
-
-            inds = obj.population.getAll();
-            if isempty(inds)
-                return;
-            end
-
-            frontInds = Individual.empty(0, 0);
-            try
-                for i = 1:length(inds)
-                    if inds(i).getRank() == 1
-                        frontInds(end + 1) = inds(i); %#ok<AGROW>
-                    end
-                end
-            catch
-                frontInds = Individual.empty(0, 0);
-            end
-
-            if isempty(frontInds)
-                frontInds = inds;
-            end
-
-            nSolutions = length(frontInds);
-            if nSolutions == 0
-                return;
-            end
-
-            try
-                nObj = length(frontInds(1).getObjectives());
-            catch
-                nObj = 0;
-            end
-            if nObj <= 0
-                return;
-            end
-
-            allObjValues = nan(length(inds), nObj);
-            for i = 1:length(inds)
-                try
-                    allObjValues(i, :) = inds(i).getObjectives();
-                catch
-                end
-            end
-            validAll = ~all(isnan(allObjValues), 2);
-            allObjValues = allObjValues(validAll, :);
-            data.populationObjectives = allObjValues;
-
-            objValues = nan(nSolutions, nObj);
-            for i = 1:nSolutions
-                try
-                    objValues(i, :) = frontInds(i).getObjectives();
-                catch
-                end
-            end
-            validRow = ~all(isnan(objValues), 2);
-            objValues = objValues(validRow, :);
-
-            data.paretoFront = objValues;
-            data.archiveSize = size(objValues, 1);
-
-            best = nan(1, nObj);
-            if ~isempty(allObjValues)
-                for j = 1:nObj
-                    col = allObjValues(:, j);
-                    col = col(isfinite(col));
-                    if ~isempty(col)
-                        best(j) = min(col);
-                    end
-                end
-            end
-            data.bestObjectives = best;
         end
     end
 end

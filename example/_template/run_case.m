@@ -44,6 +44,30 @@ function results = run_case(configFile)
         fprintf('  配置文件: %s\n', configFile);
         fprintf('  项目名称: %s\n', config.problem.name);
 
+        %% Step 1.5: 启动前验证配置
+        fprintf('\n[1.5/8] 验证配置...\n');
+        addpath(genpath(fullfile(fileparts(fileparts(mfilename('fullpath'))), '..', 'framework')));
+
+        validator = ConfigValidator(config);
+        [isValid, issues] = validator.validate();
+
+        if ~isValid
+            fprintf('\n配置存在以下错误，无法继续：\n');
+            validator.printReport();
+            error('配置验证失败。请按上述建议修复配置文件。');
+        else
+            fprintf('  ✓ 配置验证通过\n');
+            % 打印警告（如果有）
+            warnings = [];
+            [~, allIssues] = validator.validate();
+            if length(allIssues) > 0
+                fprintf('\n配置提示：\n');
+                for i = 1:length(allIssues)
+                    fprintf('  • %s\n', allIssues{i});
+                end
+            end
+        end
+
         %% Step 2: 初始化环境
         fprintf('\n[2/8] 初始化环境...\n');
 
@@ -135,23 +159,35 @@ function results = run_case(configFile)
             evaluatorTimeout = config.problem.evaluator.timeout;
         end
 
-        % 使用评估器工厂创建实例
-        try
-            evaluator = EvaluatorFactory.create(evaluatorType, simulator, evaluatorTimeout);
-        catch ME
-            % 如果工厂不存在或失败，尝试直接创建
-            fprintf('  警告: EvaluatorFactory未找到，尝试直接创建评估器\n');
-            switch evaluatorType
-                case 'ORCEvaluator'
-                    evaluator = ORCEvaluator(simulator);
-                case 'ADNProductionEvaluator'
-                    evaluator = ADNProductionEvaluator(simulator);
-                case 'MyCaseEvaluator'
-                    evaluator = MyCaseEvaluator(simulator);
-                otherwise
-                    error('未知的评估器类型: %s', evaluatorType);
-            end
+        % 创建评估器实例
+        if strcmpi(evaluatorType, 'ExpressionEvaluator')
+            % ExpressionEvaluator 使用表达式配置
+            evaluator = ExpressionEvaluator(simulator, config);
             evaluator.timeout = evaluatorTimeout;
+        else
+            % 使用评估器工厂创建其他类型的评估器
+            try
+                evaluator = EvaluatorFactory.create(evaluatorType, simulator, evaluatorTimeout, struct('config', config));
+            catch ME
+                % 工厂创建失败时，输出详细错误信息
+                fprintf('\n警告: EvaluatorFactory 创建评估器失败\n');
+                fprintf('  错误: %s\n', ME.message);
+                fprintf('  尝试使用直接构造方法...\n');
+
+                switch evaluatorType
+                    case 'ORCEvaluator'
+                        evaluator = ORCEvaluator(simulator);
+                    case 'ADNProductionEvaluator'
+                        evaluator = ADNProductionEvaluator(simulator);
+                    case 'DistillationEvaluator'
+                        evaluator = DistillationEvaluator(simulator);
+                    case 'MyCaseEvaluator'
+                        evaluator = MyCaseEvaluator(simulator);
+                    otherwise
+                        error('不支持的评估器类型: %s (工厂和直接构造都失败)', evaluatorType);
+                end
+                evaluator.timeout = evaluatorTimeout;
+            end
         end
 
         % 设置经济参数（如果存在）
@@ -183,7 +219,17 @@ function results = run_case(configFile)
         % 添加变量
         for i = 1:length(config.problem.variables)
             var = config.problem.variables(i);
-            variable = Variable(var.name, var.type, [var.lowerBound, var.upperBound]);
+            bounds = [var.lowerBound, var.upperBound];
+            if isfield(var, 'values') && ~isempty(var.values) && ...
+                    (strcmpi(var.type, 'discrete') || strcmpi(var.type, 'categorical'))
+                bounds = var.values;
+                if isstring(bounds)
+                    bounds = cellstr(bounds);
+                elseif ischar(bounds)
+                    bounds = {bounds};
+                end
+            end
+            variable = Variable(var.name, var.type, bounds);
 
             % 设置可选属性
             if isfield(var, 'unit')
@@ -200,13 +246,9 @@ function results = run_case(configFile)
         for i = 1:length(config.problem.objectives)
             obj = config.problem.objectives(i);
 
-            % 处理类型（maximize转为minimize）
-            objType = obj.type;
-            if strcmpi(objType, 'maximize')
-                objType = 'minimize';  % 内部统一为最小化
-            end
-
-            objective = Objective(obj.name, objType);
+            % 保留用户的原始目标类型（maximize或minimize）
+            % 内部统一处理由normalize()方法完成
+            objective = Objective(obj.name, obj.type);
 
             % 设置可选属性
             if isfield(obj, 'description')
@@ -224,18 +266,11 @@ function results = run_case(configFile)
             for i = 1:length(config.problem.constraints)
                 con = config.problem.constraints(i);
 
-                switch con.type
-                    case 'inequality'
-                        if contains(con.expression, '<=')
-                            constraint = Constraint.createLessEqual(con.name, 0);
-                        else
-                            constraint = Constraint.createGreaterEqual(con.name, 0);
-                        end
-                    case 'equality'
-                        constraint = Constraint.createEqual(con.name, 0);
-                    otherwise
-                        warning('未知的约束类型: %s', con.type);
-                        continue;
+                [constraint, ok] = buildConstraintFromConfig(con);
+                if ~ok
+                    warning('run_case:ConstraintConfig', ...
+                        'Skipping constraint "%s" (invalid expression or type)', con.name);
+                    continue;
                 end
 
                 if isfield(con, 'description')
@@ -331,7 +366,9 @@ function results = run_case(configFile)
                     vars = ind.getVariables();
                     objs = ind.getObjectives();
 
-                    % 处理最大化目标（转换回正值）
+                    % 转换回用户原始目标类型
+                    % 说明: 算法内部统一为最小化（maximize目标被取负），
+                    % 输出结果时需要转换回用户原始的目标类型
                     for j = 1:length(config.problem.objectives)
                         if strcmpi(config.problem.objectives(j).type, 'maximize')
                             objs(j) = -objs(j);
@@ -398,7 +435,9 @@ function results = run_case(configFile)
                 vars = ind.getVariables();
                 objs = ind.getObjectives();
 
-                % 处理最大化目标
+                % 转换回用户原始目标类型
+                % 说明: 算法内部统一为最小化（maximize目标被取负），
+                % 输出结果时需要转换回用户原始的目标类型
                 for j = 1:length(config.problem.objectives)
                     if strcmpi(config.problem.objectives(j).type, 'maximize')
                         objs(j) = -objs(j);
@@ -543,4 +582,173 @@ function generateReport(reportFile, config, results, elapsedTime, evaluator)
     end
 
     fclose(fid);
+end
+
+function [constraint, ok] = buildConstraintFromConfig(con)
+    ok = true;
+    constraint = [];
+
+    if ~isfield(con, 'type')
+        ok = false;
+        return;
+    end
+
+    conType = lower(strtrim(char(string(con.type))));
+    parsed = struct('lowerBound', -inf, 'upperBound', inf, 'target', [], 'isEquality', false);
+    parsedOk = false;
+
+    exprText = '';
+    if isfield(con, 'expression')
+        try
+            exprText = char(string(con.expression));
+        catch
+            exprText = '';
+        end
+        [parsed, parsedOk] = parseConstraintExpression(exprText);
+    end
+
+    switch conType
+        case 'inequality'
+            lowerBound = [];
+            upperBound = [];
+
+            if isfield(con, 'lowerBound')
+                lowerBound = con.lowerBound;
+            end
+            if isfield(con, 'upperBound')
+                upperBound = con.upperBound;
+            end
+
+            if isempty(lowerBound) && isempty(upperBound) && parsedOk
+                if parsed.isEquality
+                    lowerBound = parsed.target;
+                    upperBound = parsed.target;
+                else
+                    if isfinite(parsed.lowerBound)
+                        lowerBound = parsed.lowerBound;
+                    end
+                    if isfinite(parsed.upperBound)
+                        upperBound = parsed.upperBound;
+                    end
+                end
+            end
+
+            if isempty(lowerBound) && isempty(upperBound) && ~isempty(exprText)
+                if contains(exprText, '<=') || contains(exprText, '<')
+                    upperBound = 0;
+                elseif contains(exprText, '>=') || contains(exprText, '>')
+                    lowerBound = 0;
+                end
+            end
+
+            if ~isempty(lowerBound) && isfinite(lowerBound) && ~isempty(upperBound) && isfinite(upperBound)
+                constraint = Constraint(con.name, 'inequality', ...
+                    'LowerBound', lowerBound, 'UpperBound', upperBound);
+            elseif ~isempty(upperBound) && isfinite(upperBound)
+                constraint = Constraint.createLessEqual(con.name, upperBound);
+            elseif ~isempty(lowerBound) && isfinite(lowerBound)
+                constraint = Constraint.createGreaterEqual(con.name, lowerBound);
+            else
+                constraint = Constraint(con.name, 'inequality');
+            end
+
+        case 'equality'
+            target = [];
+            if isfield(con, 'target')
+                target = con.target;
+            elseif parsedOk && parsed.isEquality
+                target = parsed.target;
+            elseif parsedOk && ~parsed.isEquality
+                if isfinite(parsed.lowerBound) && isfinite(parsed.upperBound) && ...
+                        parsed.lowerBound == parsed.upperBound
+                    target = parsed.lowerBound;
+                elseif isfinite(parsed.lowerBound)
+                    target = parsed.lowerBound;
+                elseif isfinite(parsed.upperBound)
+                    target = parsed.upperBound;
+                end
+            end
+            if isempty(target)
+                target = 0;
+            end
+
+            if isfield(con, 'tolerance')
+                constraint = Constraint(con.name, 'equality', ...
+                    'Target', target, 'Tolerance', con.tolerance);
+            else
+                constraint = Constraint.createEqual(con.name, target);
+            end
+
+        otherwise
+            ok = false;
+            warning('run_case:ConstraintType', 'Unknown constraint type: %s', con.type);
+    end
+end
+
+function [parsed, ok] = parseConstraintExpression(expression)
+    parsed = struct('lowerBound', -inf, 'upperBound', inf, 'target', [], 'isEquality', false);
+    ok = false;
+
+    if isempty(expression)
+        return;
+    end
+
+    try
+        expr = char(string(expression));
+    catch
+        expr = '';
+    end
+
+    expr = strtrim(expr);
+    if isempty(expr)
+        return;
+    end
+
+    tokens = regexp(expr, '^\s*(?<lhs>[^<>=]+?)\s*(?<op><=|>=|==|=|<|>)\s*(?<rhs>.+)\s*$', 'names');
+    if isempty(tokens)
+        return;
+    end
+
+    lhs = strtrim(tokens.lhs);
+    rhs = strtrim(tokens.rhs);
+    op = tokens.op;
+
+    lhsVal = str2double(lhs);
+    rhsVal = str2double(rhs);
+    lhsIsNum = isfinite(lhsVal);
+    rhsIsNum = isfinite(rhsVal);
+
+    if strcmp(op, '=') || strcmp(op, '==')
+        parsed.isEquality = true;
+        if lhsIsNum && ~rhsIsNum
+            parsed.target = lhsVal;
+            ok = true;
+        elseif rhsIsNum && ~lhsIsNum
+            parsed.target = rhsVal;
+            ok = true;
+        end
+        return;
+    end
+
+    if strcmp(op, '<=') || strcmp(op, '<')
+        if rhsIsNum && ~lhsIsNum
+            parsed.upperBound = rhsVal;
+            ok = true;
+        elseif lhsIsNum && ~rhsIsNum
+            parsed.lowerBound = lhsVal;
+            ok = true;
+        end
+        return;
+    end
+
+    if strcmp(op, '>=') || strcmp(op, '>')
+        if rhsIsNum && ~lhsIsNum
+            parsed.lowerBound = rhsVal;
+            ok = true;
+        elseif lhsIsNum && ~rhsIsNum
+            parsed.upperBound = lhsVal;
+            ok = true;
+        end
+        return;
+    end
 end

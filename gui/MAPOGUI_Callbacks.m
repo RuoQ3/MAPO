@@ -156,7 +156,7 @@ end
 %% ========================================
 
 function BrowseModelButtonPushed(app, event)
-    %% 浏览模型文件
+    %% 浏览模型文件（集成AspenTreeBrowserGUI）
 
     simType = app.SimulatorTypeDropDown.Value;
 
@@ -175,6 +175,113 @@ function BrowseModelButtonPushed(app, event)
         fullPath = fullfile(path, file);
         app.ModelPathField.Value = fullPath;
         logMessage(app, sprintf('选择模型文件: %s', fullPath));
+
+        % Aspen模型：提供浏览Aspen树的选项
+        if strcmpi(simType, 'Aspen') && exist('AspenTreeBrowserGUI', 'class')
+            answer = questdlg('是否打开Aspen树浏览器来选择变量和结果节点?', ...
+                'Aspen树浏览器', '是', '否', '否');
+
+            if strcmp(answer, '是')
+                launchAspenTreeBrowser(app, fullPath);
+            end
+        end
+    end
+end
+
+function launchAspenTreeBrowser(app, modelPath)
+    %% 启动AspenTreeBrowserGUI浏览Aspen模型树
+
+    logMessage(app, '正在启动Aspen树浏览器...');
+
+    try
+        browser = AspenTreeBrowserGUI();
+        success = browser.connectModel(modelPath);
+
+        if ~success
+            uialert(app.UIFigure, '无法连接Aspen模型，请确认Aspen Plus已安装', ...
+                '连接失败', 'Icon', 'error');
+            logMessage(app, 'Aspen树浏览器连接失败');
+            return;
+        end
+
+        % 创建浏览器窗口
+        browserFig = uifigure('Name', 'Aspen树浏览器 - 选择变量和结果节点', ...
+            'Position', [200, 100, 600, 700]);
+
+        browserGrid = uigridlayout(browserFig, [3, 1]);
+        browserGrid.RowHeight = {'1x', 40, 40};
+        browserGrid.Padding = [10, 10, 10, 10];
+        browserGrid.RowSpacing = 8;
+
+        % 树控件
+        browser.buildTreeUI(browserFig, 'Position', [10, 100, 580, 550]);
+
+        % 提示标签
+        tipLabel = uilabel(browserGrid);
+        tipLabel.Text = '右键节点可标记为"输入变量"或"输出结果"';
+        tipLabel.Layout.Row = 2;
+        tipLabel.Layout.Column = 1;
+        tipLabel.HorizontalAlignment = 'center';
+
+        % 确认按钮
+        confirmBtn = uibutton(browserGrid, 'push');
+        confirmBtn.Text = '确认选择并导入映射';
+        confirmBtn.Layout.Row = 3;
+        confirmBtn.Layout.Column = 1;
+        confirmBtn.ButtonPushedFcn = @(~, ~) importAspenTreeMappings(app, browser, browserFig);
+
+        logMessage(app, 'Aspen树浏览器已启动');
+
+    catch ME
+        logMessage(app, sprintf('启动Aspen树浏览器失败: %s', ME.message));
+        uialert(app.UIFigure, sprintf('启动失败: %s', ME.message), ...
+            '错误', 'Icon', 'error');
+    end
+end
+
+function importAspenTreeMappings(app, browser, browserFig)
+    %% 从AspenTreeBrowserGUI导入变量和结果映射到GUI表格
+
+    try
+        [varMap, resMap] = browser.getSelectedMappings();
+
+        % 导入变量映射
+        varFields = fieldnames(varMap);
+        if ~isempty(varFields)
+            currentData = app.VarMappingTable.Data;
+            for i = 1:length(varFields)
+                newRow = {varFields{i}, varMap.(varFields{i})};
+                currentData = [currentData; newRow]; %#ok<AGROW>
+            end
+            app.VarMappingTable.Data = currentData;
+            logMessage(app, sprintf('导入 %d 个变量映射', length(varFields)));
+        end
+
+        % 导入结果映射
+        resFields = fieldnames(resMap);
+        if ~isempty(resFields)
+            currentData = app.ResMappingTable.Data;
+            for i = 1:length(resFields)
+                newRow = {resFields{i}, resMap.(resFields{i}), ''};
+                currentData = [currentData; newRow]; %#ok<AGROW>
+            end
+            app.ResMappingTable.Data = currentData;
+            logMessage(app, sprintf('导入 %d 个结果映射', length(resFields)));
+        end
+
+        % 断开连接并关闭浏览器
+        browser.disconnect();
+        if isvalid(browserFig)
+            close(browserFig);
+        end
+
+        updateConfigStatus(app);
+        logMessage(app, 'Aspen树映射导入完成');
+
+    catch ME
+        logMessage(app, sprintf('导入映射失败: %s', ME.message));
+        uialert(app.UIFigure, sprintf('导入失败: %s', ME.message), ...
+            '错误', 'Icon', 'error');
     end
 end
 
@@ -333,7 +440,7 @@ function ApplyResTemplateButtonPushed(app, event)
 end
 
 function TestConnectionButtonPushed(app, event)
-    %% 测试仿真器连接
+    %% 测试仿真器连接并执行试算
 
     logMessage(app, '开始测试连接...');
     app.TestConnectionButton.Enable = 'off';
@@ -375,16 +482,29 @@ function TestConnectionButtonPushed(app, event)
         % 连接
         simulator.connect(simConfig);
 
+        % 执行试算 (DryRunManager集成)
+        if ~isempty(app.dryRunManager)
+            try
+                app.ConnectionStatusLabel.Text = '状态: 执行试算...';
+                drawnow;
+                dryResult = app.dryRunManager.runDryRun(simulator, app.config);
+                app.dryRunResult = dryResult;
+                logMessage(app, '试算完成，公式工作台可用');
+            catch dryErr
+                logMessage(app, sprintf('试算失败(非致命): %s', dryErr.message));
+            end
+        end
+
         % 断开
         simulator.disconnect();
 
         % 成功
-        app.ConnectionStatusLabel.Text = '状态: ✓ 连接成功';
+        app.ConnectionStatusLabel.Text = '状态: 连接成功';
         logMessage(app, '仿真器连接测试成功');
         uialert(app.UIFigure, '仿真器连接测试成功！', '测试成功', 'Icon', 'success');
 
     catch ME
-        app.ConnectionStatusLabel.Text = '状态: ✗ 连接失败';
+        app.ConnectionStatusLabel.Text = '状态: 连接失败';
         logMessage(app, sprintf('连接测试失败: %s', ME.message));
         uialert(app.UIFigure, sprintf('连接失败: %s', ME.message), '测试失败', 'Icon', 'error');
     end
@@ -1400,4 +1520,186 @@ function promptSaveResults(app)
             end
         end
     end
+end
+
+%% ========================================
+%% 配置向导回调
+%% ========================================
+
+function LaunchConfigWizardButtonPushed(app, event)
+    %% 启动配置向导
+
+    logMessage(app, '启动配置向导...');
+
+    try
+        wizard = ConfigWizard();
+        wizard.launchGUI();
+
+        % 阻塞等待向导完成
+        if ~isempty(wizard.wizardFigure) && isvalid(wizard.wizardFigure)
+            uiwait(wizard.wizardFigure);
+        end
+
+        % 获取配置
+        config = wizard.config;
+
+        if ~isempty(config) && isstruct(config)
+            % 将配置加载到GUI
+            loadConfigToGUI(app, config);
+            logMessage(app, '配置向导完成，配置已加载到GUI');
+            uialert(app.UIFigure, '配置已从向导加载', '成功', 'Icon', 'success');
+        else
+            logMessage(app, '配置向导已取消');
+        end
+
+    catch ME
+        logMessage(app, sprintf('配置向导失败: %s', ME.message));
+        uialert(app.UIFigure, sprintf('向导启动失败: %s', ME.message), ...
+            '错误', 'Icon', 'error');
+    end
+end
+
+function loadConfigToGUI(app, config)
+    %% 从config struct加载数据到GUI各标签页
+
+    % 加载问题配置
+    if isfield(config, 'problem')
+        prob = config.problem;
+
+        if isfield(prob, 'name')
+            app.ProblemNameField.Value = prob.name;
+        end
+
+        % 变量
+        if isfield(prob, 'variables') && ~isempty(prob.variables)
+            varData = cell(length(prob.variables), 7);
+            for i = 1:length(prob.variables)
+                var = prob.variables(i);
+                varData{i, 1} = var.name;
+                varData{i, 2} = 'continuous';
+                if isfield(var, 'type'), varData{i, 2} = var.type; end
+                varData{i, 3} = 0;
+                if isfield(var, 'lowerBound'), varData{i, 3} = var.lowerBound; end
+                varData{i, 4} = 100;
+                if isfield(var, 'upperBound'), varData{i, 4} = var.upperBound; end
+                varData{i, 5} = '';
+                varData{i, 6} = '';
+                if isfield(var, 'unit'), varData{i, 6} = var.unit; end
+                varData{i, 7} = '';
+            end
+            app.VariablesTable.Data = varData;
+        end
+
+        % 目标
+        if isfield(prob, 'objectives') && ~isempty(prob.objectives)
+            objData = cell(length(prob.objectives), 4);
+            for i = 1:length(prob.objectives)
+                obj_i = prob.objectives(i);
+                objData{i, 1} = obj_i.name;
+                objData{i, 2} = 'minimize';
+                if isfield(obj_i, 'type'), objData{i, 2} = obj_i.type; end
+                objData{i, 3} = 1.0;
+                objData{i, 4} = '';
+                if isfield(obj_i, 'expression'), objData{i, 4} = obj_i.expression; end
+            end
+            app.ObjectivesTable.Data = objData;
+        end
+
+        % 约束
+        if isfield(prob, 'constraints') && ~isempty(prob.constraints)
+            conData = cell(length(prob.constraints), 4);
+            for i = 1:length(prob.constraints)
+                con = prob.constraints(i);
+                conData{i, 1} = con.name;
+                conData{i, 2} = 'inequality';
+                if isfield(con, 'type'), conData{i, 2} = con.type; end
+                conData{i, 3} = '';
+                if isfield(con, 'expression'), conData{i, 3} = con.expression; end
+                conData{i, 4} = '';
+            end
+            app.ConstraintsTable.Data = conData;
+        end
+
+        % 评估器
+        if isfield(prob, 'evaluator')
+            if isfield(prob.evaluator, 'type')
+                evalType = char(string(prob.evaluator.type));
+                items = app.EvaluatorTypeDropDown.Items;
+                if ~ismember(evalType, items)
+                    items{end+1} = evalType;
+                    app.EvaluatorTypeDropDown.Items = items;
+                end
+                app.EvaluatorTypeDropDown.Value = evalType;
+            end
+            if isfield(prob.evaluator, 'timeout')
+                app.EvaluatorTimeoutSpinner.Value = prob.evaluator.timeout;
+            end
+        end
+    end
+
+    % 加载仿真器配置
+    if isfield(config, 'simulator')
+        sim = config.simulator;
+
+        if isfield(sim, 'type')
+            app.SimulatorTypeDropDown.Value = sim.type;
+        end
+        if isfield(sim, 'settings') && isfield(sim.settings, 'modelPath')
+            app.ModelPathField.Value = sim.settings.modelPath;
+        end
+
+        % 节点映射 - 变量
+        if isfield(sim, 'nodeMapping') && isfield(sim.nodeMapping, 'variables')
+            varNames = fieldnames(sim.nodeMapping.variables);
+            varMapData = cell(length(varNames), 2);
+            for i = 1:length(varNames)
+                varMapData{i, 1} = varNames{i};
+                varMapData{i, 2} = sim.nodeMapping.variables.(varNames{i});
+            end
+            app.VarMappingTable.Data = varMapData;
+        end
+
+        % 节点映射 - 结果
+        if isfield(sim, 'nodeMapping') && isfield(sim.nodeMapping, 'results')
+            resNames = fieldnames(sim.nodeMapping.results);
+            resMapData = cell(length(resNames), 2);
+            for i = 1:length(resNames)
+                resMapData{i, 1} = resNames{i};
+                resMapData{i, 2} = sim.nodeMapping.results.(resNames{i});
+            end
+            app.ResMappingTable.Data = resMapData;
+        end
+    end
+
+    % 加载算法配置
+    if isfield(config, 'algorithm')
+        alg = config.algorithm;
+
+        if isfield(alg, 'type')
+            app.AlgorithmDropDown.Value = alg.type;
+            switch alg.type
+                case 'NSGA-II'
+                    app.NSGAIIPanel.Visible = 'on';
+                    app.PSOPanel.Visible = 'off';
+                case 'PSO'
+                    app.NSGAIIPanel.Visible = 'off';
+                    app.PSOPanel.Visible = 'on';
+            end
+        end
+
+        if isfield(alg, 'parameters')
+            params = alg.parameters;
+            if isfield(params, 'populationSize')
+                app.PopSizeSpinner_NSGAII.Value = params.populationSize;
+            end
+            if isfield(params, 'maxGenerations')
+                app.MaxGenSpinner_NSGAII.Value = params.maxGenerations;
+            end
+        end
+    end
+
+    % 更新状态
+    updateConfigStatus(app);
+    updateAlgorithmDescription(app);
+    updateEstimations(app);
 end
