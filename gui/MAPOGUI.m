@@ -1,7 +1,7 @@
 classdef MAPOGUI < handle
     % MAPOGUI - MAPO 交互式图形用户界面 (布局修复版)
     %
-    % 版本: v1.2 - 修复布局问题 (使用 Grid Layout 替代绝对定位)
+    % 版本: v2.1 - 修复布局问题 (使用 Grid Layout 替代绝对定位)
     % 日期: 2025-12-12
 
     properties (Access = {?OptimizationCallbacks})
@@ -199,7 +199,7 @@ classdef MAPOGUI < handle
         function createMainWindow(app)
             % 创建主窗口
             app.UIFigure = uifigure('Visible', 'off');
-            app.UIFigure.Name = 'MAPO - MATLAB-Aspen Process Optimizer v2.0';
+            app.UIFigure.Name = 'MAPO - MATLAB-Aspen Process Optimizer v2.1';
             app.UIFigure.Position = [100, 50, 1400, 850];
             app.UIFigure.Color = [0.94, 0.94, 0.94];
 

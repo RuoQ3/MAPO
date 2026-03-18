@@ -21,7 +21,7 @@ function results = run_case(configFile)
     %% 初始化
     clc;
     fprintf('========================================\n');
-    fprintf('MAPO 通用优化框架 v2.0\n');
+    fprintf('MAPO 通用优化框架 v2.1\n');
     fprintf('========================================\n\n');
 
     % 记录开始时间

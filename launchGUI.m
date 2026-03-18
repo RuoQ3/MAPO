@@ -32,7 +32,7 @@ function launchGUI(varargin)
     scriptPath = fileparts(mfilename('fullpath'));
 
     fprintf('========================================\n');
-    fprintf('MAPO 图形用户界面启动器 v2.0\n');
+    fprintf('MAPO 图形用户界面启动器 v2.1\n');
     fprintf('========================================\n');
     fprintf('项目根目录: %s\n', scriptPath);
 

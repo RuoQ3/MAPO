@@ -605,7 +605,7 @@ classdef (Abstract) AlgorithmBase < IOptimizer
                 return;
             end
 
-            vars = variableSet.getVariables();
+            vars = variableSet.getIterator();
             if length(vars) ~= length(variables)
                 error('AlgorithmBase:VariableSizeMismatch', ...
                       '变量数量不匹配: 期望%d, 实际%d', length(vars), length(variables));
@@ -613,7 +613,7 @@ classdef (Abstract) AlgorithmBase < IOptimizer
 
             % 对每个变量进行修复
             for i = 1:length(vars)
-                var = vars(i);
+                var = vars{i};
                 value = variables(i);
 
                 % 使用 denormalize 方法来处理各种类型的变量
